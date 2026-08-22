@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-main
+  cancel-in-progress: true
+
+jobs:
+  runtime-core:
+    name: Runtime Core (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build nlohmann-json3-dev
+      - run: cmake -B build -G Ninja -DMAAI_BUILD_RUNTIME_CORE=ON -DMAAI_ENABLE_TESTS=ON
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  agent-dylib:
+    name: MAAiAgent.dylib (iOS cross)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置 iOS 交叉编译工程
+        run: |
+          cmake -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DMAAI_BUILD_IOS_AGENT=ON -DMAAI_ENABLE_TESTS=OFF
+      - name: 编译 MAAiAgent.dylib（免签名）
+        run: cmake --build build-ios --config Release --target MAAiAgent -- CODE_SIGNING_ALLOWED=NO
+      - name: 定位 dylib 产物
+        run: find build-ios -name "*.dylib"
+      - name: 上传 dylib 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAAiAgent-dylib
+          path: build-ios/**/*.dylib
+          if-no-files-found: error
+
+  docker:
+    name: maai-server image (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 从 staging 目录构建镜像（运行库由 setup.sh 下载，不进仓库）
+        run: |
+          mkdir -p staging/maafw staging/resource staging/bridge
+          touch staging/maafw/.keep staging/resource/.keep
+          echo '#!/bin/sh' > staging/mxu && chmod +x staging/mxu
+          cp maai-server/Dockerfile maai-server/entry.sh maai-server/interface.json staging/
+          cp -r maai-server/bridge/* staging/bridge/
+          docker build -t maai-server staging
