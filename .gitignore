@@ -1,0 +1,36 @@
+# macOS / Xcode
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+# iOS
+*.ipa
+*.dSYM
+Payload/
+
+# Python / tooling
+__pycache__/
+*.pyc
+.venv/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# MaaFramework / resources downloads
+third_party/
+resources-download/
+*.zip
+*.tar.gz
+
+# maai-server 运行产物（由 setup.sh / Docker 生成）
+maai-server/maafw/
+maai-server/mxu
+maai-server/config/
+maai-server/debug/
+
+# Test artifacts
+Testing/
+*.log

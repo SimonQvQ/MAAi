@@ -1,0 +1,49 @@
+name: Docker Hub Publish
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Build & Push maai-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare placeholder context
+        run: |
+          mkdir -p maai-server/maafw maai-server/resource
+          touch maai-server/maafw/.keep maai-server/resource/.keep
+          echo '#!/bin/sh' > maai-server/mxu && chmod +x maai-server/mxu
+
+      - name: Resolve resource URL
+        run: echo "MEOW_RESOURCE_URL=https://github.com/MaaAssistantArknights/MaaResource/archive/refs/heads/main.zip" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./maai-server
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/maai-server:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/maai-server:${{ github.ref_name }}
+          build-args: |
+            MAAFW_URL=${{ secrets.MAAFW_URL }}
+            MXU_URL=${{ secrets.MXU_URL }}
+            MEOW_RESOURCE_URL=${{ secrets.MEOW_RESOURCE_URL || env.MEOW_RESOURCE_URL }}
