@@ -1,6 +1,6 @@
 # MAAi -- iOS 版明日方舟助手 (MAA)
 
-MAA 的 iPhone 移植：**服务器（Docker）跑 MaaFramework + 官方资源，iPhone 上注入 dylib 负责截图/点击/浮层**，两端通过 JSON-over-TCP 通信。
+MAA 的 iPhone 移植：**服务器（Docker）跑 MaaFramework + 官方资源，iPhone 上注入 dylib 负责截图/点击/浮层**，两端通过 JSON-over-TCP 通信。Web 控制台基于 **MWU**（MaaFramework WebUI）实现任务组合与调度。
 
 [![CI](https://github.com/SimonQvQ/MAAi/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonQvQ/MAAi/actions/workflows/ci.yml)
 [![Docker Hub](https://img.shields.io/docker/pulls/simonqvq/maai-server.svg)](https://hub.docker.com/r/simonqvq/maai-server)
@@ -13,11 +13,14 @@ MAA 的 iPhone 移植：**服务器（Docker）跑 MaaFramework + 官方资源�
    - 截图/点击/输入/浮层   --17171-->  maai-bridge (agent 通道)
    - 浮层显示执行节点/状态  <--JSON--  MaaFramework 5.12.3 任务引擎
    - 浮层可点开设置服务器地址         官方 MAA v5 资源 (pipeline 等)
-                                      Web 控制台 (8080，替代 VNC)
+                                       MWU WebUI (8080)
+                                        - 设备/任务/调度/组合
+                                        - iPhone = MAAi 控制器
 ```
 
-- 任务逻辑（识别/点击流程）来自 **官方 MAA v5.28.5 资源包**，已烘焙进镜像，开箱即用。
+- 任务逻辑（识别/点击流程）来自 **官方 MAA v5.12.2 资源包**，构建时自动转换为标准 MaaFramework bundle（见 `convert_maares.py`），开箱即用。
 - 不在手机上重写 MAA 逻辑 —— dylib 只负责把「手」伸到 iPhone 上，引擎在服务器。
+- **MWU 集成**：新增 `MAAi` 设备类型（iPhone 自定义控制器），可组合多任务（启动/刷理智/基建/公招…）一键执行，支持定时调度。
 
 ## 快速开始
 
@@ -27,16 +30,19 @@ docker run -d --name maai \
   simonqvq/maai-server:latest
 ```
 
-- **Web 控制台**：浏览器打开 `http://<服务器IP>:8080` —— 看 agent 连接状态、实时截图、任务进度，可开始/停止任务（默认自动跑 `StartUp`）。
+- **Web 控制台（MWU）**：浏览器打开 `http://<服务器IP>:8080`。
+  1. 设备页选 **iPhone（MAAiAgent）**，地址填 `0.0.0.0:17171`（默认）→ 连接；
+  2. 选资源 **MAA**；
+  3. 任务页勾选组合（如「一键长草」预设：启动→每日→基建→公招→刷理智）→ 启动。
 - **Agent 端口**：`17171`，iPhone 端 dylib 拨入。
-- **日志**：`docker logs -f maai`。
+- **日志**：`docker logs -f maai`，或 WebUI 内实时日志。
 
 ## iPhone 端（dylib）
 
 1. 在 GitHub Actions 的 **MAAiAgent-dylib** 工件里下载 `MAAiAgent.dylib`（免签名编译）。
 2. 注入明日方舟进程（LiveContainer / 越狱环境均可）。
-3. 打开游戏 → 浮层显示「MAAi 未连接」→ **点浮层标签**弹出设置，填 `<服务器IP>:17171` 保存并重启连接。
-4. 连接成功后自动开始跑任务，浮层实时显示「执行: 节点名」/「任务完成 ✅」。
+3. 打开游戏 → 浮层显示「MAAi 未连接」→ **点浮层标签**弹出设置，填 `<服务器IP>:17171` 保存并重启连接（首次运行即使未填地址也会显示浮层）。
+4. 连接成功后即可在 MWU 里连接/跑任务，浮层实时显示「执行: 节点名」/「任务完成 ✅」。
 
 > 连接地址也可用环境变量 `MAAI_SERVER_HOST` / `MAAI_SERVER_PORT` 预设（优先级高于浮层设置）。
 
@@ -44,28 +50,29 @@ docker run -d --name maai \
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `MAAI_RUN` | `1` | `1` 时 agent 拨入自动跑任务；`0` 仅监听 agent 通道 |
-| `MAAI_ENTRY` | `StartUp` | 任务入口名（pipeline 节点名） |
-| `MAAI_RESOURCE` | `/opt/maai/resource` | MaaFramework 资源包目录 |
-| `MAAI_WEB_PORT` | `8080` | Web 控制台端口 |
+| `MAAI_WEB_PORT` | `8080` | MWU Web 控制台端口 |
 | `MAAI_BRIDGE_HOST` / `MAAI_BRIDGE_PORT` | `0.0.0.0` / `17171` | agent 通道监听 |
-
-换任务：`docker run ... -e MAAI_ENTRY=Fight simonqvq/maai-server:latest`（取决于资源包里的节点名，如 `StartUp`/`Fight`/`Award`…）。
+| `MAAI_RESOURCE` | `/opt/maai/mwu/resource` | 转换后的 MaaFramework 资源包目录 |
 
 ## 资源
 
-- 默认烘焙 **官方 MAA v5.28.5** 完整资源（`pipeline/` 任务定义 + `template/` 模板图 + OCR 模型 + 数据），与 MaaFramework 5.12.3 完全兼容。
-- 可选叠加官方 MaaResource 动态数据（新活动地图/公招数据）：构建时传 `MEOW_RESOURCE_URL`。
+- 默认烘焙 **官方 MAA v5.12.2** 完整资源：构建时 `fetch_official_resources.sh` 下载并提取 `resource/`，再经 `convert_maares.py` 转成 MaaFramework 5.12.3 可加载的标准 bundle（`pipeline/` 任务定义 + `image/` 模板 + `model/ocr/` 识别模型）。
+- 镜像内可直接用 MWU 选资源加载；加载后任务节点（`StartUp`/`Fight`/`Award`/`Recruit`/`Infrast`…）立即可跑。
 
 ## 构建与发布
 
-```bash
-docker build -t maai-server maai-server
+所有构建都在 **GitHub Actions** 完成（本地/群晖不编译）：
 
-git tag v0.1.5 && git push origin v0.1.5   # 触发 CI 自动发布 Docker Hub
+```bash
+# 推 main 触发 CI：dylib 交叉编译 + Linux 运行时 + MWU Docker 镜像构建验证
+git push origin main
+
+# 打 tag 触发发布：MWU Web 前端 + Docker 镜像推到 Docker Hub (latest)
+git tag v0.1.6 && git push origin v0.1.6
 ```
 
-仓库 Secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（发布）、`MAAFW_URL` / `MAA5_RES_URL` / `MEOW_RESOURCE_URL`（资源下载，均可选）。
+- `maai-server/mwu/`：MAAi×MWU 集成（`maa_bridge.py` 通道 + `maa_controller.py` 自定义控制器 + 前后端 patch 脚本 + `interface.json` 任务组合/预设）。
+- 仓库 Secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（发布）、`MAAFW_URL` / `MAA5_RES_URL`（资源下载，均可选）。
 
 ## 协议（MAAi 便捷线格式）
 
@@ -76,10 +83,8 @@ git tag v0.1.5 && git push origin v0.1.5   # 触发 CI 自动发布 Docker Hub
 ## 已知边界
 
 - 识别依赖屏幕内容：低分辨率/缩放异常会导致模板匹配失败（官方参数已按 1080p 优化）。
-- 本仓库内置 `MaaResource` 数据包仅含数据；**任务定义**来自官方 MAA v5 完整资源（已烘焙）。
-- MAA v6（官方新版/MAA-Meow）任务语法不兼容当前 MaaFramework 5.12.3，如需 v6 资源需升级运行时（见 `fetch_official_resources.sh` 说明）。
-- 目前是 bridge 直接驱动任务；MXU（桌面 GUI 客户端）暂未接入，Web 控制台已覆盖其「看状态/截图」用途。
+- MAA v6 / MAA-Meow 任务语法（`ClickSelf`、`#self` 锚点等）不兼容 MaaFramework 5.12.3，已由 `convert_maares.py` 转标准语法；如需 v6 资源需升级运行时。
 
 ## 相关
 
-- [MaaFramework](https://github.com/MaaXYZ/MaaFramework) · [MAA](https://github.com/MaaAssistantArknights/MaaAssistantArknights) · [MAA-Meow](https://github.com/Aliothmoon/MAA-Meow) · [MaaResource](https://github.com/MaaAssistantArknights/MaaResource) · [MXU](https://github.com/MistEO/MXU)
+- [MaaFramework](https://github.com/MaaXYZ/MaaFramework) · [MAA](https://github.com/MaaAssistantArknights/MaaAssistantArknights) · [MWU](https://github.com/ravizhan/MWU) · [MAA-Meow](https://github.com/Aliothmoon/MAA-Meow) · [MaaResource](https://github.com/MaaAssistantArknights/MaaResource)
