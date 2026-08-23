@@ -47,13 +47,14 @@ def main():
     p = f / "stores" / "device" / "deviceConnection.ts"
     t = p.read_text(encoding="utf-8")
 
-    # 把“是否地址输入型设备”判定扩展为 PlayCover 或 MAAi
-    t = rep1(
+    # 把“是否地址输入型设备”判定扩展为 PlayCover 或 MAAi（保留左侧操作数）
+    import re as _re
+    t, _n = _re.subn(
+        r'([\w.$?]+)\s*===\s*"PlayCover"',
+        r'(\1 === "PlayCover" || \1 === "MAAi")',
         t,
-        '=== "PlayCover"',
-        '=== "PlayCover" || === "MAAi"',
-        "deviceConnection type==PlayCover",
     )
+    print(f"[patch_frontend] deviceConnection type==PlayCover -> {_n} replacements")
     # buildPlayCoverDevice 返回正确类型
     t = rep1(
         t,
