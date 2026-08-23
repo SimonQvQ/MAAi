@@ -44,13 +44,26 @@ jobs:
           if-no-files-found: error
 
   docker:
-    name: maai-server image (Docker)
+    name: maai-server image (Docker, MWU)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 构建镜像（含官方 MAA v5 资源，验证开箱即用 Dockerfile）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11 --activate
+      - name: Clone MWU + patch + build web
         run: |
-          mkdir -p staging/bridge
-          cp maai-server/Dockerfile maai-server/entry.sh maai-server/fetch_resource.sh maai-server/fetch_official_resources.sh maai-server/convert_maares.py staging/
-          cp -r maai-server/bridge/* staging/bridge/
-          docker build -t maai-server staging
+          git clone --depth 1 https://github.com/ravizhan/MWU.git mwu_src
+          bash maai-server/mwu/build_mwu_web.sh maai-server/mwu mwu_src
+      - name: Prepare Docker context
+        run: |
+          mkdir -p ctx/page
+          cp -r mwu_src ctx/mwu_src
+          cp -r mwu_src/page/. ctx/page/
+          cp maai-server/Dockerfile.mwu ctx/Dockerfile
+          cp maai-server/fetch_official_resources.sh maai-server/convert_maares.py ctx/
+          cp maai-server/mwu/interface.json ctx/interface.json
+      - name: Docker build
+        run: docker build -t maai-server ctx

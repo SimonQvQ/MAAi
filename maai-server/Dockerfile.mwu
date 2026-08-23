@@ -1,0 +1,44 @@
+FROM ubuntu:22.04
+
+# 在 FROM 之后声明，RUN 里才能读到
+ARG MAA5_RES_URL="https://github.com/MaaAssistantArknights/MaaAssistantArknights/releases/download/v5.12.2/MAA-v5.12.2-win-x64.zip"
+ARG MAAFW_URL=""
+
+ENV LD_LIBRARY_PATH=/opt/maai/maafw
+ENV MAAI_WEB_PORT=8080
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3 python3-pip curl unzip ca-certificates libjpeg-turbo8 git \
+    && rm -rf /var/lib/apt/lists/*
+
+# MWU 后端依赖（MWU pyproject 运行依赖子集）+ maafw + 截图解码
+RUN pip3 install --no-cache-dir \
+      "maafw==5.12.3" \
+      opencv-python-headless numpy \
+      fastapi "uvicorn[standard]" apscheduler aiosqlite httpx pillow plyer \
+      sqlalchemy websockets pyjson5 python-multipart \
+    && rm -rf /root/.cache/pip
+
+WORKDIR /opt/maai/mwu
+
+# CI 构建时已 clone MWU 并应用 MAAi patch（mwu_src/）+ 前端构建产物（page/）
+COPY mwu_src/ /opt/maai/mwu/
+COPY page/ /opt/maai/mwu/page/
+COPY interface.json /opt/maai/mwu/interface.json
+
+# MaaFramework 运行库（可选）
+RUN if [ -n "$MAAFW_URL" ]; then \
+        mkdir -p /opt/maai/maafw /tmp/maafw_pkg && \
+        curl -fsSL --retry 3 "$MAAFW_URL" -o /tmp/maafw.zip && \
+        unzip -q /tmp/maafw.zip -d /tmp/maafw_pkg && \
+        cp -a /tmp/maafw_pkg/*/bin/. /opt/maai/maafw/ && \
+        chmod -R +x /opt/maai/maafw 2>/dev/null || true; \
+    fi
+
+# MAA 官方资源（下载 + 转换为标准 MaaFramework bundle）
+COPY fetch_official_resources.sh convert_maares.py /opt/maai/
+RUN bash /opt/maai/fetch_official_resources.sh "$MAA5_RES_URL" /opt/maai/mwu/resource
+
+EXPOSE 17171 8080
+CMD ["bash", "-c", "cd /opt/maai/mwu && exec python3 -m uvicorn main:app --host 0.0.0.0 --port ${MAAI_WEB_PORT:-8080}"]

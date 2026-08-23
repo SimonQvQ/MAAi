@@ -1,0 +1,48 @@
+{
+  "interface_version": 2,
+  "name": "MAAi",
+  "label": "MAAi 明日方舟助手",
+  "version": "0.1.5",
+  "github": "https://github.com/SimonQvQ/MAAi",
+  "description": "iPhone 端明日方舟自动化（Docker 服务端 + MAA 官方资源）",
+  "controller": [
+    {
+      "name": "iPhone",
+      "type": "MAAi",
+      "label": "iPhone (MAAiAgent)",
+      "description": "连接 iOS 明日方舟进程（MAAiAgent 浮窗设置服务器地址后自动拨入）"
+    }
+  ],
+  "resource": [
+    {
+      "name": "MAA",
+      "label": "MAA 官方资源 (v5.12.2 转换)",
+      "path": ["resource"]
+    }
+  ],
+  "task": [
+    { "name": "启动游戏", "entry": "StartUp" },
+    { "name": "每日任务", "entry": "DailyTask" },
+    { "name": "刷理智", "entry": "Fight" },
+    { "name": "领取奖励", "entry": "Award" },
+    { "name": "公开招募", "entry": "Recruit" },
+    { "name": "基建换班", "entry": "Infrast" },
+    { "name": "访问好友", "entry": "Visit" },
+    { "name": "信用商店", "entry": "Mall" },
+    { "name": "集成战略", "entry": "Roguelike" }
+  ],
+  "preset": [
+    {
+      "name": "oneclick",
+      "label": "一键长草",
+      "description": "启动游戏 → 每日任务 → 基建换班 → 公开招募 → 刷理智",
+      "task": [
+        { "name": "启动游戏" },
+        { "name": "每日任务" },
+        { "name": "基建换班" },
+        { "name": "公开招募" },
+        { "name": "刷理智" }
+      ]
+    }
+  ]
+}
