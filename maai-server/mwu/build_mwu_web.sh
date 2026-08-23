@@ -4,8 +4,8 @@ set -euo pipefail
 # 用法: bash build_mwu_web.sh <maai_mwu_dir> <mwu_src_dir>
 #   maai_mwu_dir : MAAi 仓库 maai-server/mwu（含 patch 脚本/maa_bridge/maa_controller）
 #   mwu_src_dir  : MWU 源码目录（已 clone；构建后 page/ 输出到其中）
-MAI_MWU="${1:?maai mwu dir required}"
-MWU_SRC="${2:?mwu src dir required}"
+MAI_MWU="$(cd "$(dirname "${1:?maai mwu dir required}")" && pwd)/$(basename "$1")"
+MWU_SRC="$(cd "${2:?mwu src dir required}" && pwd)"
 
 cd "$MWU_SRC"
 
