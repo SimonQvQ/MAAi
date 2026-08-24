@@ -17,12 +17,11 @@ MaaRuntime/src/core/ipc_message.h 完全一致，max 16MB）。
 
 注意:
   - 没有探测到 MaaFramework 库时，bridge 仍可单独运行（便于先测 agent 通道）。
-  - opencv/PIL 任选其一用于 JPEG->RGBA，都没有则 SCREENCAP raw 数据直接透传。
+  - 截图解码依赖 opencv（cv2）：有则走 JPEG 快路径，没有则回退 raw RGBA。
 """
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import queue

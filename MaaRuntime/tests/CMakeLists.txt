@@ -1,6 +1,7 @@
 set(MAAI_TEST_SOURCES
   test_ipc.cpp
-  test_tcp_roundtrip.cpp)
+  test_tcp_roundtrip.cpp
+  test_tcp_framing.cpp)
 
 foreach(src ${MAAI_TEST_SOURCES})
   get_filename_component(name ${src} NAME_WE)

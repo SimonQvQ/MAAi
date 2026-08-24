@@ -20,6 +20,12 @@ namespace maai::ipc {
 namespace {
 constexpr size_t kMaxClientCount = 8;
 
+// 读 4 字节大端帧长。
+uint32_t readFrameLen(const uint8_t* p) {
+  return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+         (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
 // 循环发送一整个帧；对端关闭/出错返回 false。
 bool sendAll(int fd, const std::vector<uint8_t>& data) {
   size_t sent = 0;
@@ -162,28 +168,39 @@ void TcpServer::clientLoop(int fd, const std::string& peer) {
   // 半帧留在 buf 里等后续数据，不能丢弃，否则流永久失步。
   std::vector<uint8_t> buf;
   std::vector<uint8_t> tmp(65536);
-  while (!stopped_.load()) {
+  bool drop = false;
+  while (!stopped_.load() && !drop) {
     ssize_t n = ::recv(fd, tmp.data(), tmp.size(), 0);
     if (n <= 0) break;
     buf.insert(buf.end(), tmp.data(), tmp.data() + n);
 
-    size_t consumed = 0;
-    nlohmann::json frame;
-    while (decodeFrame(buf.data(), buf.size(), consumed, frame)) {
-      buf.erase(buf.begin(), buf.begin() + static_cast<long>(consumed));
-
-      if (!handler_) continue;
-      try {
-        sendAll(fd, encodeFrame(handler_(frame)));
-      } catch (const std::exception& e) {
-        sendAll(fd, encodeFrame(toJson(Message::errorResponse("", e.what()))));
+    while (true) {
+      size_t consumed = 0;
+      nlohmann::json frame;
+      if (decodeFrame(buf.data(), buf.size(), consumed, frame)) {
+        buf.erase(buf.begin(), buf.begin() + static_cast<long>(consumed));
+        if (handler_) {
+          try {
+            sendAll(fd, encodeFrame(handler_(frame)));
+          } catch (const std::exception& e) {
+            sendAll(fd, encodeFrame(toJson(Message::errorResponse("", e.what()))));
+          }
+        }
+        continue;
       }
-    }
-    // decodeFrame 返回 false = 帧不完整或超长。不完整等下一次 recv；
-    // 超长/损坏流则 buf 无界增长，超过上限直接断开。
-    if (buf.size() > kMaxFrameBytes + 4) {
-      Log::warn("oversized/corrupt stream from " + peer + ", dropping connection");
-      break;
+      // decodeFrame 失败的三种情况：半帧 / 坏 JSON 帧 / 非法帧长
+      if (buf.size() < 4) break;          // 连长度头都没收齐，等下一次 recv
+      uint32_t len = readFrameLen(buf.data());
+      if (len > kMaxFrameBytes) {         // 声明长度非法，流不可恢复
+        Log::warn("oversized frame length " + std::to_string(len) + " from " + peer +
+                  ", dropping connection");
+        drop = true;
+        break;
+      }
+      if (buf.size() < 4u + len) break;   // 半帧，等下一次 recv
+      // 完整帧但 JSON 非法：跳过这帧，长度前缀仍有效，流不失步
+      buf.erase(buf.begin(), buf.begin() + 4 + static_cast<long>(len));
+      Log::warn("malformed JSON frame from " + peer + ", skipped");
     }
   }
 

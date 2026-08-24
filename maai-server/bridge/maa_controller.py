@@ -165,7 +165,10 @@ def run_agent_task(
         state.log("加载资源: " + str(resource_path))
 
     ctrl = MAAiAgentController(agent, jpeg_quality=jpeg_quality)
-    ctrl.post_connection().wait()
+    if not ctrl.post_connection().wait().succeeded:
+        if state:
+            state.task_status = "agent 连接失败"
+        return {"ok": False, "error": "agent 连接失败"}
 
     res = Resource()
     res.post_bundle(str(resource_path)).wait()
