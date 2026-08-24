@@ -18,6 +18,10 @@ from queue import Empty, Queue
 BUF_MAX = 16 * 1024 * 1024
 
 
+class ProtocolError(Exception):
+    """帧长度非法：流已失步，无法再按长度前缀切帧。"""
+
+
 def _log(*a):
     print(time.strftime("[%H:%M:%S]"), "[maa_bridge]", *a, flush=True)
 
@@ -28,17 +32,18 @@ def encode_frame(obj: dict) -> bytes:
 
 
 def _try_decode(buf: bytearray):
+    """返回 (frames, rest)；帧不完整则返回空列表，长度非法抛 ProtocolError。"""
     frames = []
     while len(buf) >= 4:
         n = struct.unpack(">I", bytes(buf[:4]))[0]
         if n == 0 or n > BUF_MAX:
-            return frames, bytearray()
+            raise ProtocolError(f"bad frame length {n}")
         if len(buf) < 4 + n:
             break
         try:
             frames.append(json.loads(bytes(buf[4:4 + n]).decode("utf-8")))
-        except json.JSONDecodeError:
-            pass
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass  # 坏帧跳过：长度前缀仍有效，流不失步
         del buf[:4 + n]
     return frames, buf
 
@@ -63,7 +68,10 @@ class AgentSession:
         req_id = uuid.uuid4().hex
         q: Queue = Queue(maxsize=1)
         self._pending[req_id] = q
-        self.send({"v": 1, "type": "request", "req_id": req_id, "cmd": cmd, "params": params})
+        try:
+            self.send({"v": 1, "type": "request", "req_id": req_id, "cmd": cmd, "params": params})
+        except OSError:
+            return {"ok": False, "error": f"send failed: {cmd}"}
         try:
             return q.get(timeout=timeout)
         except Empty:
@@ -73,7 +81,13 @@ class AgentSession:
 
     def feed(self, data: bytes):
         self.buf += data
-        frames, self.buf = _try_decode(self.buf)
+        try:
+            frames, self.buf = _try_decode(self.buf)
+        except ProtocolError as e:
+            # 流已失步且无法恢复：断开让 agent 重连
+            _log(f"[agent {self.addr}] 协议错误: {e}，断开连接")
+            self.close()
+            return
         for m in frames:
             if m.get("type") == "response":
                 q = self._pending.get(m.get("req_id", ""))
@@ -110,7 +124,12 @@ class AgentServer:
     def start(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((self.host, self.port))
+        try:
+            srv.bind((self.host, self.port))
+        except OSError as e:
+            _log(f"监听 {self.host}:{self.port} 失败: {e}")
+            srv.close()
+            return
         srv.listen(8)
         _log(f"监听 {self.host}:{self.port}，等待 MAAiAgent 拨入...")
         while True:
@@ -139,7 +158,10 @@ class AgentServer:
 
     def first_agent(self):
         with self._lock:
-            return self.sessions[0] if self.sessions else None
+            for s in self.sessions:
+                if s.connected:
+                    return s
+            return None
 
 
 class MAAiBridge:

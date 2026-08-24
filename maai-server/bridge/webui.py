@@ -133,19 +133,7 @@ class BridgeState:
                 self.log_lines = self.log_lines[-200:]
 
     def first_agent(self):
-        srv = self.server
-        if srv is None:
-            return None
-        lock = getattr(srv, "_lock", None)
-        if lock:
-            with lock:
-                sessions = list(srv.sessions)
-        else:
-            sessions = list(getattr(srv, "sessions", []))
-        for a in sessions:
-            if getattr(a, "connected", False):
-                return a
-        return None
+        return self.server.first_agent() if self.server else None
 
     def status(self) -> dict:
         with self.lock:

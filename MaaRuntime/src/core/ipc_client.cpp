@@ -90,27 +90,23 @@ bool TcpClient::readExact(int fd, uint8_t* buf, size_t n) {
 }
 
 void TcpClient::receiveLoop() {
-  std::vector<uint8_t> pending;
   while (!stopped_.load() && fd_ >= 0) {
     uint8_t hdr[4];
     if (!readExact(fd_, hdr, 4)) break;
     uint32_t len = (static_cast<uint32_t>(hdr[0]) << 24) | (static_cast<uint32_t>(hdr[1]) << 16) |
                    (static_cast<uint32_t>(hdr[2]) << 8) | static_cast<uint32_t>(hdr[3]);
-    if (len == 0 || len > 16 * 1024 * 1024) break;
-    std::vector<uint8_t> frame(len);
-    if (!readExact(fd_, frame.data(), len)) break;
-    // decodeFrame 要求数据以 4 字节大端长度头开头，必须把头一并保留
-    pending.insert(pending.end(), hdr, hdr + 4);
-    pending.insert(pending.end(), frame.begin(), frame.end());
-    size_t consumed = 0;
-    nlohmann::json out;
-    while (decodeFrame(pending.data(), pending.size(), consumed, out)) {
-      if (onMessage_) onMessage_(out);
-      if (consumed >= pending.size()) { pending.clear(); break; }
-      std::vector<uint8_t> rest(pending.begin() + static_cast<long>(consumed), pending.end());
-      pending = std::move(rest);
-      consumed = 0;
+    if (len == 0 || len > kMaxFrameBytes) break;  // 协议违规，断开等重连
+    std::vector<uint8_t> body(len);
+    if (!readExact(fd_, body.data(), len)) break;
+
+    nlohmann::json msg;
+    try {
+      msg = nlohmann::json::parse(body.begin(), body.end());
+    } catch (...) {
+      // 坏帧跳过：长度前缀仍然有效，流不会失步
+      continue;
     }
+    if (onMessage_) onMessage_(msg);
   }
   // 连接断开
   if (fd_ >= 0) { ::close(fd_); fd_ = -1; }

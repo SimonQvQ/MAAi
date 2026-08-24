@@ -55,17 +55,13 @@ def convert_task(node: dict) -> dict:
 def load_task_files(res_dir: str) -> dict:
     """收集 MAA 任务定义（tasks.json 单文件 或 tasks/ 目录多个 json）。"""
     merged = {}
-    cand = [
-        os.path.join(res_dir, "tasks.json"),
-        os.path.join(res_dir, "tasks", "tasks.json"),
-    ]
-    for p in cand:
-        if os.path.isfile(p):
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                merged.update(data)
-    # tasks/ 目录下所有 json（若存在）
+    p = os.path.join(res_dir, "tasks.json")
+    if os.path.isfile(p):
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            merged.update(data)
+    # tasks/ 目录下所有 json（含 tasks/tasks.json，若存在）
     tasks_dir = os.path.join(res_dir, "tasks")
     if os.path.isdir(tasks_dir):
         for root, _, files in os.walk(tasks_dir):

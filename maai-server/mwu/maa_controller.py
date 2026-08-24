@@ -10,6 +10,11 @@ import base64
 
 import numpy as np
 
+try:
+    import cv2  # 可选：有则走 JPEG 快路径，无则回退 raw RGBA
+except ImportError:
+    cv2 = None
+
 from maa.controller import CustomController
 
 
@@ -47,10 +52,6 @@ class MAAiAgentController(CustomController):
         return True
 
     def screencap(self) -> np.ndarray:
-        try:
-            import cv2
-        except Exception:
-            cv2 = None
         if cv2 is not None:
             r = self.agent.request("SCREENCAP", {"format": "jpeg", "quality": self.jpeg_quality})
             data = r.get("result", {}).get("data")

@@ -5,10 +5,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstring>
 #include <exception>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "core/ipc_message.h"
 #include "core/log.h"
@@ -17,6 +19,18 @@ namespace maai::ipc {
 
 namespace {
 constexpr size_t kMaxClientCount = 8;
+
+// 循环发送一整个帧；对端关闭/出错返回 false。
+bool sendAll(int fd, const std::vector<uint8_t>& data) {
+  size_t sent = 0;
+  while (sent < data.size()) {
+    ssize_t w = ::send(fd, data.data() + sent, data.size() - sent, MSG_NOSIGNAL);
+    if (w < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    if (w <= 0) return false;
+    sent += static_cast<size_t>(w);
+  }
+  return true;
+}
 }
 
 TcpServer::TcpServer(std::string host, uint16_t port)
@@ -136,42 +150,40 @@ void TcpServer::closeClient(int fd) {
   }
   ::shutdown(fd, SHUT_RDWR);
   ::close(fd);
-  if (t.joinable()) t.join();
+  // closeClient 只会由 clientLoop 在自己的线程里调用，join 自己会抛
+  // system_error(resource_deadlock_would_occur) 进而导致进程终止，必须 detach。
+  if (t.joinable()) t.detach();
 }
 
 void TcpServer::clientLoop(int fd, const std::string& peer) {
   Log::info("client connected: " + peer);
 
-  std::vector<uint8_t> readBuf(65536);
+  // 帧可跨多次 recv 到达（上限 16MB，远超单次 64KB 读缓冲），
+  // 半帧留在 buf 里等后续数据，不能丢弃，否则流永久失步。
+  std::vector<uint8_t> buf;
+  std::vector<uint8_t> tmp(65536);
   while (!stopped_.load()) {
-    ssize_t n = ::recv(fd, readBuf.data(), readBuf.size(), 0);
+    ssize_t n = ::recv(fd, tmp.data(), tmp.size(), 0);
     if (n <= 0) break;
+    buf.insert(buf.end(), tmp.data(), tmp.data() + n);
 
-    size_t offset = 0;
-    while (offset < static_cast<size_t>(n)) {
-      size_t consumed = 0;
-      nlohmann::json frame;
-      if (!decodeFrame(readBuf.data() + offset, static_cast<size_t>(n) - offset, consumed, frame)) {
-        Log::warn("incomplete frame from " + peer + ", waiting for more data");
-        break;
-      }
-      offset += consumed;
+    size_t consumed = 0;
+    nlohmann::json frame;
+    while (decodeFrame(buf.data(), buf.size(), consumed, frame)) {
+      buf.erase(buf.begin(), buf.begin() + static_cast<long>(consumed));
 
       if (!handler_) continue;
       try {
-        nlohmann::json response = handler_(frame);
-        auto out = encodeFrame(response);
-        size_t sent = 0;
-        while (sent < out.size()) {
-          ssize_t w = ::send(fd, out.data() + sent, out.size() - sent, MSG_NOSIGNAL);
-          if (w <= 0) break;
-          sent += static_cast<size_t>(w);
-        }
+        sendAll(fd, encodeFrame(handler_(frame)));
       } catch (const std::exception& e) {
-        nlohmann::json err = toJson(Message::errorResponse("", e.what()));
-        auto out = encodeFrame(err);
-        ::send(fd, out.data(), out.size(), MSG_NOSIGNAL);
+        sendAll(fd, encodeFrame(toJson(Message::errorResponse("", e.what()))));
       }
+    }
+    // decodeFrame 返回 false = 帧不完整或超长。不完整等下一次 recv；
+    // 超长/损坏流则 buf 无界增长，超过上限直接断开。
+    if (buf.size() > kMaxFrameBytes + 4) {
+      Log::warn("oversized/corrupt stream from " + peer + ", dropping connection");
+      break;
     }
   }
 

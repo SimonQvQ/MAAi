@@ -17,6 +17,9 @@ namespace maai::ipc {
 
 constexpr int kProtocolVersion = 1;
 
+// 单帧上限（含长度头）：超出视为协议违规。
+constexpr uint32_t kMaxFrameBytes = 16 * 1024 * 1024;
+
 enum class MsgType { Request, Response, Event, Unknown };
 
 struct Message {

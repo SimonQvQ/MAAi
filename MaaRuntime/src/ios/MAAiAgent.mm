@@ -39,6 +39,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 @implementation MAAiAgent {
   std::unique_ptr<TcpClient> _client;
   dispatch_queue_t _workQueue;
+  BOOL _started;
   BOOL _retryScheduled;
 }
 
@@ -59,6 +60,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     _touchEnabled = YES;
     _overlayEnabled = YES;
     _streamEnabled = NO;
+    _started = NO;
     _retryScheduled = NO;
     _workQueue = dispatch_queue_create("com.maai.agent", DISPATCH_QUEUE_SERIAL);
     _capture = [[MAAScreenCapture alloc] init];
@@ -81,14 +83,18 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   self.overlay.onSettingsTap = ^{ [ws showServerSettings]; };
   [self.overlay setConnected:NO host:self.serverHost];
   [self.overlay setAction:@"等待服务器..."];
-  dispatch_async(_workQueue, ^{ [self attemptConnect]; });
+  dispatch_async(_workQueue, ^{
+    self->_started = YES;
+    [self attemptConnect];
+  });
   return YES;
 }
 
 - (void)stop {
-  _retryScheduled = NO;
   dispatch_async(_workQueue, ^{
-    if (_client) { _client->disconnect(); _client.reset(); }
+    self->_started = NO;
+    self->_retryScheduled = NO;
+    if (self->_client) { self->_client->disconnect(); self->_client.reset(); }
   });
   dispatch_async(dispatch_get_main_queue(), ^{
     [self.streamTimer invalidate];
@@ -126,6 +132,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 #pragma mark - 连接循环
 
 - (void)attemptConnect {
+  if (!_started) return;  // stop 之后排队中的重连不再执行
   if (_client && _client->connected()) return;
   _client.reset(new TcpClient(std::string(self.serverHost.UTF8String ?: ""), self.serverPort));
 
@@ -186,7 +193,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   if (!_client || !_client->connected()) return;
   nlohmann::json r;
   r["v"] = maai::ipc::kProtocolVersion;
-  r["type"] = ok ? "response" : "response";
+  r["type"] = "response";
   r["req_id"] = reqId ? reqId.UTF8String : "";
   r["ok"] = ok;
   r["result"] = result;
@@ -291,8 +298,6 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 
 - (void)handleScreencap:(const nlohmann::json&)p reqId:(NSString*)reqId {
   std::string format = p.value("format", "jpeg");
-  NSData* jpeg = [_capture captureJPEG];
-  if (!jpeg) { [self respond:reqId ok:NO result:nlohmann::json() error:@"capture failed"]; return; }
   if (format == "raw") {
     __block nlohmann::json result;
     __block BOOL done = NO;
@@ -310,6 +315,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     else [self respond:reqId ok:NO result:nlohmann::json() error:@"capture failed"];
     return;
   }
+  NSData* jpeg = [_capture captureJPEG];
+  if (!jpeg) { [self respond:reqId ok:NO result:nlohmann::json() error:@"capture failed"]; return; }
   nlohmann::json result = {{"format", "jpeg"}, {"data", [[jpeg base64EncodedStringWithOptions:0] UTF8String]}};
   [self respond:reqId ok:YES result:result error:nil];
 }

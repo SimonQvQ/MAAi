@@ -135,7 +135,7 @@ bool decodeFrame(const uint8_t* data, size_t size, size_t& consumed, nlohmann::j
                  (static_cast<uint32_t>(data[1]) << 16) |
                  (static_cast<uint32_t>(data[2]) << 8) |
                  static_cast<uint32_t>(data[3]);
-  if (len > 16 * 1024 * 1024) return false;  // 拒绝超大帧
+  if (len > kMaxFrameBytes) return false;  // 拒绝超大帧
   if (size < 4u + len) return false;
   try {
     out = nlohmann::json::parse(data + 4, data + 4 + len);
