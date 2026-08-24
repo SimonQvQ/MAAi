@@ -51,6 +51,7 @@
   w.userInteractionEnabled = YES;
   w.rootViewController = [UIViewController new];
   w.backgroundColor = [UIColor clearColor];
+  [self attachScene:w];
 
   CGFloat y = 34; // 避开状态栏
   CGFloat wd = [UIScreen mainScreen].bounds.size.width - 24;
@@ -75,10 +76,22 @@
   _actionLabel.layer.cornerRadius = 8;
   _actionLabel.clipsToBounds = YES;
 
-  [w addSubview:_statusLabel];
-  [w addSubview:_actionLabel];
+  [w.rootViewController.view addSubview:_statusLabel];
+  [w.rootViewController.view addSubview:_actionLabel];
   w.tappableViews = @[ _statusLabel, _actionLabel ];
   return w;
+}
+
+// iOS 13+ 多场景：不绑 scene 的 UIWindow 不会合成显示。
+- (void)attachScene:(UIWindow*)w {
+  if (@available(iOS 13.0, *)) {
+    for (UIScene* sc in [UIApplication sharedApplication].connectedScenes) {
+      if ([sc isKindOfClass:[UIWindowScene class]] && sc.activationState != UISceneActivationStateUnattached) {
+        w.windowScene = (UIWindowScene*)sc;
+        break;
+      }
+    }
+  }
 }
 
 - (void)settingsTapped {
@@ -88,6 +101,7 @@
 - (void)show {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (!_window) { _window = [self buildWindow]; }
+    [self attachScene:_window]; // scene 可能晚于窗口创建才连接
     _window.hidden = NO;
   });
 }
@@ -118,7 +132,9 @@
 
 - (void)presentServerSettingsWithHost:(NSString*)host port:(uint16_t)port completion:(void (^)(NSString*, uint16_t))completion {
   dispatch_async(dispatch_get_main_queue(), ^{
-    if (!_window) { _window = [self buildWindow]; _window.hidden = NO; }
+    if (!_window) { _window = [self buildWindow]; }
+    [self attachScene:_window];
+    _window.hidden = NO;
     UIAlertController* ac = [UIAlertController alertControllerWithTitle:@"MAAi 服务器"
                                                                message:@"填写 Docker 服务器地址（IP 或域名）"
                                                         preferredStyle:UIAlertControllerStyleAlert];

@@ -99,6 +99,8 @@ void TcpClient::receiveLoop() {
     if (len == 0 || len > 16 * 1024 * 1024) break;
     std::vector<uint8_t> frame(len);
     if (!readExact(fd_, frame.data(), len)) break;
+    // decodeFrame 要求数据以 4 字节大端长度头开头，必须把头一并保留
+    pending.insert(pending.end(), hdr, hdr + 4);
     pending.insert(pending.end(), frame.begin(), frame.end());
     size_t consumed = 0;
     nlohmann::json out;
