@@ -92,7 +92,7 @@ jobs:
           [ "$ok" = 1 ] || { echo "== MWU never responded =="; docker logs maai-smoke 2>&1 | tail -60; exit 1; }
           echo "== MWU /api/interface =="; curl -sf http://127.0.0.1:18080/api/interface | head -c 300; echo
           echo "== MaaFramework native lib load =="
-          docker exec maai-smoke python3 -c 'import maa; from maa.resource import Resource; print("maafw lib OK", maa.__version__)'
+          docker exec maai-smoke python3 -c 'import maa; from maa.resource import Resource; print("maafw lib OK")'
           echo "== agent port 17171 bindable =="
           docker exec maai-smoke python3 -c 'import socket; s=socket.socket(); s.bind(("0.0.0.0",17171)); s.close(); print("17171 OK")'
           docker rm -f maai-smoke
