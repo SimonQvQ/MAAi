@@ -67,3 +67,22 @@ jobs:
           cp maai-server/mwu/interface.json ctx/interface.json
       - name: Docker build
         run: docker build -t maai-server ctx
+      - name: Smoke test (container boots + MWU responds + MaaFramework loads)
+        run: |
+          set -euxo pipefail
+          docker run -d --name maai-smoke -p 18080:8080 maai-server
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:18080/api/interface; then ok=1; break; fi
+            if ! docker ps --filter name=maai-smoke --format '{{.Status}}' | grep -q Up; then
+              echo "== container died =="; docker logs maai-smoke 2>&1 | tail -60; exit 1
+            fi
+            sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "== MWU never responded =="; docker logs maai-smoke 2>&1 | tail -60; exit 1; }
+          echo "== MWU /api/interface =="; curl -sf http://127.0.0.1:18080/api/interface | head -c 300; echo
+          echo "== MaaFramework native lib load =="
+          docker exec maai-smoke python3 -c 'import maa; from maa.resource import Resource; print("maafw lib OK", maa.__version__)'
+          echo "== agent port 17171 bindable =="
+          docker exec maai-smoke python3 -c 'import socket; s=socket.socket(); s.bind(("0.0.0.0",17171)); s.close(); print("17171 OK")'
+          docker rm -f maai-smoke
