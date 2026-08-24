@@ -15,6 +15,11 @@ MaaRuntime/src/core/ipc_message.h 完全一致，max 16MB）。
   python3 agent_bridge.py --host 0.0.0.0 --port 17171          # 仅监听 agent 通道
   python3 agent_bridge.py --run --entry StartUp --resource ./resource  # 跑任务
 
+任务启动流程（--entry 只是默认入口，不会自动开跑）:
+  1. webui(8080) 任务下拉框选任务 -> 点"开始"（state.running 置位）;
+  2. iPhone 浮层点"连接并开始" -> agent 拨入并上报 TASK_CONTROL start;
+  3. _run_loop 检测到 running + agent 在线即加载资源跑任务。
+
 注意:
   - 没有探测到 MaaFramework 库时，bridge 仍可单独运行（便于先测 agent 通道）。
   - 截图解码依赖 opencv（cv2）：有则走 JPEG 快路径，没有则回退 raw RGBA。
@@ -65,9 +70,10 @@ def _try_decode(buf: bytearray):
 class AgentSession:
     """一个已连接的 MAAiAgent（iPhone 侧）。"""
 
-    def __init__(self, sock: socket.socket, addr):
+    def __init__(self, sock: socket.socket, addr, server=None):
         self.sock = sock
         self.addr = addr
+        self.server = server  # 用于把 agent 事件转发给 AgentServer.on_event
         self.buf = bytearray()
         self.connected = True
         self.last_status: dict = {}
@@ -120,6 +126,12 @@ class AgentSession:
             log(f"[agent {self.addr}] SCREENSHOT event ({len(str(payload.get('data','')) )} b64)")
         else:
             log(f"[agent {self.addr}] event {ev}")
+        # 转发给上层（如 TASK_CONTROL 启停指令）
+        if self.server and getattr(self.server, "on_event", None):
+            try:
+                self.server.on_event(self, ev, payload)
+            except Exception as e:
+                log(f"[agent {self.addr}] on_event 处理失败: {e!r}")
 
     def close(self):
         self.connected = False
@@ -134,6 +146,9 @@ class AgentServer:
         self.host, self.port = host, port
         self.sessions: list[AgentSession] = []
         self._lock = threading.Lock()
+        # 上层事件回调: on_event(session, event, payload)
+        # 由 agent_bridge.main 注入，处理 overlay 发来的 TASK_CONTROL 等
+        self.on_event = None
 
     def start(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -148,7 +163,7 @@ class AgentServer:
         log(f"bridge 监听 {self.host}:{self.port}，等待 MAAiAgent 拨入...")
         while True:
             sock, addr = srv.accept()
-            s = AgentSession(sock, addr)
+            s = AgentSession(sock, addr, server=self)
             with self._lock:
                 self.sessions.append(s)
             threading.Thread(target=self._reader, args=(s,), daemon=True).start()
@@ -181,12 +196,15 @@ class AgentServer:
 # ---------------------------------------------------------------- MaaFramework 任务运行
 
 def _run_loop(server: AgentServer, entry: str, resource_path: str, state):
-    """等待 agent 拨入，用 maa_controller 跑任务（web 可启停/换入口）。"""
+    """等待开始指令（webui 开始按钮 / overlay TASK_CONTROL）后跑任务。
+
+    agent 拨入不会自动开跑——用户先在 webui 选任务点开始，或在
+    overlay 上点"连接并开始"，state.running 置位后这里才执行。
+    """
     from maa_controller import run_agent_task
 
-    state.entry = entry
-    state.running = True
-    log(f"[run] 等待 MAAiAgent 拨入，entry={entry}, resource={resource_path} ...")
+    state.entry = entry  # 默认入口，可被 webui/overlay 覆盖
+    log(f"[run] 就绪: entry={entry}, resource={resource_path}，等待开始指令...")
     while True:
         if not state.running:
             time.sleep(0.5)
@@ -201,6 +219,7 @@ def _run_loop(server: AgentServer, entry: str, resource_path: str, state):
             log(f"[run] 任务结束: {detail}")
         except Exception as exc:
             state.task_status = "error"
+            state.running = False
             log(f"[run] 任务异常: {exc!r}")
         state.running = False
         time.sleep(0.5)
@@ -227,6 +246,22 @@ def main():
     import webui
     state = webui.BridgeState()
     state.server = server
+    state.resource_path = args.resource
+
+    # overlay（MAAiAgent 浮层按钮）发来的启停指令
+    def _on_agent_event(session, ev, payload):
+        if ev != "TASK_CONTROL":
+            return
+        action = str(payload.get("action", ""))
+        if action == "start":
+            ok, msg = state.request_start(str(payload.get("entry") or ""))
+            log(f"[控制] overlay 请求开始: {'已受理' if ok else '被拒绝(' + msg + ')'}")
+        elif action == "stop":
+            if state.request_stop():
+                log("[控制] overlay 请求停止")
+
+    server.on_event = _on_agent_event
+
     web_port = int(os.environ.get("MAAI_WEB_PORT", "8080"))
     webui.start_server(state, "0.0.0.0", web_port)
     log(f"webui: http://0.0.0.0:{web_port}")

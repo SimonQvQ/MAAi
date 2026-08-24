@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +37,7 @@ PAGE = """<!DOCTYPE html>
   button { background:#2563eb; color:#fff; border:0; padding:8px 14px; border-radius:8px; font-size:14px; cursor:pointer; }
   button:disabled { opacity:.5; }
   input { background:#0f1115; border:1px solid #2a2e38; color:#e6e6e6; padding:8px; border-radius:8px; }
+  select { background:#0f1115; border:1px solid #2a2e38; color:#e6e6e6; padding:8px; border-radius:8px; max-width:320px; }
   pre { font-size:12px; color:#9aa0aa; white-space:pre-wrap; }
   .big { font-size:15px; }
 </style>
@@ -65,9 +67,10 @@ PAGE = """<!DOCTYPE html>
   <div class="card">
     <div class="row">
       <b>开始任务</b>
-      <input id="entry_input" placeholder="StartUp" value="StartUp">
-      <button onclick="start()">开始</button>
+      <select id="entry_select"></select>
+      <button id="start_btn" onclick="start()">开始</button>
       <button onclick="stop()" style="background:#dc2626">停止</button>
+      <span id="task_count" style="color:#888;font-size:12px"></span>
     </div>
     <pre id="log"></pre>
   </div>
@@ -82,6 +85,11 @@ PAGE = """<!DOCTYPE html>
   var log = document.getElementById('log');
   var img = document.getElementById('screen');
 
+  var sel = document.getElementById('entry_select');
+  var startBtn = document.getElementById('start_btn');
+  var taskCount = document.getElementById('task_count');
+  var lastEntry = '';
+
   function poll() {
     fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
       dots.className = 'dot ' + (s.connected ? 'on' : 'off');
@@ -90,20 +98,53 @@ PAGE = """<!DOCTYPE html>
       entry.textContent = s.entry || '-';
       task.textContent = s.task_status || '-';
       node.textContent = s.last_node || '等待...';
+      if (s.entry && s.entry !== lastEntry) {
+        lastEntry = s.entry;
+        if (sel.value !== lastEntry) { sel.value = lastEntry; }
+      }
       var t = s.log || '';
       if (t) { log.textContent = t.slice(-800); log.scrollTop = log.scrollHeight; }
+    }).catch(function(){});
+  }
+  function loadTasks() {
+    fetch('/api/tasks').then(function(r){ return r.json(); }).then(function(d){
+      var tasks = d.tasks || [];
+      var cur = sel.value;  // 保留用户当前选择，不被定时刷新重置
+      sel.innerHTML = '';
+      if (!tasks.length) {
+        var o = document.createElement('option');
+        o.textContent = '无可用任务（资源未就绪）'; o.value = '';
+        sel.appendChild(o);
+        sel.disabled = true; startBtn.disabled = true;
+        taskCount.textContent = '';
+        return;
+      }
+      sel.disabled = false; startBtn.disabled = false;
+      tasks.forEach(function(t){
+        var o = document.createElement('option');
+        o.value = t.entry;
+        o.textContent = (t.name && t.name !== t.entry) ? (t.name + ' · ' + t.entry) : t.entry;
+        sel.appendChild(o);
+      });
+      taskCount.textContent = tasks.length + ' 个任务';
+      if (cur && tasks.some(function(t){ return t.entry === cur; })) { sel.value = cur; }
+      else if (lastEntry) { sel.value = lastEntry; }
+      if (!sel.value) { sel.selectedIndex = 0; }
     }).catch(function(){});
   }
   function snap() {
     img.src = '/api/screenshot?t=' + Date.now();
   }
   function start() {
-    var e = document.getElementById('entry_input').value || 'StartUp';
+    var e = sel.value;
+    if (!e) return;
     fetch('/api/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entry:e})});
   }
   function stop() {
     fetch('/api/stop', {method:'POST'});
   }
+  loadTasks();
+  setInterval(loadTasks, 10000);
   snap();
   setInterval(poll, 1000);
   setInterval(snap, 2000);
@@ -113,18 +154,94 @@ PAGE = """<!DOCTYPE html>
 """
 
 
+# ---------------------------------------------------------------- 任务发现
+_task_cache = {"t": 0.0, "path": "", "tasks": []}
+
+
+def _scan_tasks(resource_path: str) -> list:
+    """从资源包提取可运行的任务入口。
+
+    优先 interface.json（MAA 风格 {"task": [...]} 或 MaaFW 风格 {"tasks": [...]}，
+    每项含 name/entry）；否则扫描 pipeline/*.json 顶层节点，取未被其他节点
+    next/interrupt 引用过的节点作为入口候选。
+    """
+    if not resource_path or not os.path.isdir(resource_path):
+        return []
+
+    p = os.path.join(resource_path, "interface.json")
+    if os.path.isfile(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        items = data.get("task") or data.get("tasks") or []
+        tasks = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("name") or it.get("entry") or "").strip()
+            entry = str(it.get("entry") or it.get("name") or "").strip()
+            if name and entry and not any(t["entry"] == entry for t in tasks):
+                tasks.append({"name": name, "entry": entry})
+        if tasks:
+            return tasks
+
+    pipe_dir = os.path.join(resource_path, "pipeline")
+    nodes = {}
+    if os.path.isdir(pipe_dir):
+        for fn in sorted(os.listdir(pipe_dir)):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(pipe_dir, fn), encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                nodes.update(data)
+
+    referenced = set()
+    for node in nodes.values():
+        if not isinstance(node, dict):
+            continue
+        for key in ("next", "interrupt"):
+            refs = node.get(key) or []
+            if isinstance(refs, str):
+                refs = [refs]
+            for r in refs:
+                if isinstance(r, str) and r:
+                    referenced.add(r)
+                    if "@" in r:  # "Derived@Base" 模板引用，Base 也被引用
+                        referenced.add(r.split("@")[-1])
+    entries = sorted(n for n in nodes if n not in referenced)
+    return [{"name": n, "entry": n} for n in entries]
+
+
+def discover_tasks(resource_path: str) -> list:
+    """带 10s TTL 缓存的任务发现（pipeline json 可达 10MB，避免每次请求都扫）。"""
+    now = time.time()
+    c = _task_cache
+    if c["path"] == resource_path and now - c["t"] < 10:
+        return c["tasks"]
+    tasks = _scan_tasks(resource_path)
+    c.update(t=now, path=resource_path, tasks=tasks)
+    return tasks
+
+
 class BridgeState:
     """bridge 与 web 共享的运行状态。"""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.server = None  # 由 agent_bridge 注入 AgentServer
+        self.resource_path = ""  # 由 agent_bridge 注入资源目录
         self.running = False
         self.entry = ""
         self.task_status = "idle"
         self.last_node = ""
         self.log_lines = []
-        self.tasker = None  # 由 _run_loop 设置
+        self.tasker = None  # 由 run_agent_task 设置/清理
 
     def log(self, text: str):
         with self.lock:
@@ -134,6 +251,32 @@ class BridgeState:
 
     def first_agent(self):
         return self.server.first_agent() if self.server else None
+
+    def request_start(self, entry: str = "") -> tuple:
+        """请求开始任务（webui 开始按钮 / overlay TASK_CONTROL 共用）。
+
+        任务运行中时拒绝，避免结束后重复跑。返回 (ok, msg)。
+        """
+        with self.lock:
+            entry = (entry or "").strip() or self.entry or "StartUp"
+            if self.tasker is not None:
+                return False, "task running"
+            self.entry = entry
+            self.running = True
+            self.task_status = "pending"
+        self.log("开始任务: " + entry)
+        return True, "ok"
+
+    def request_stop(self) -> bool:
+        with self.lock:
+            tasker = self.tasker
+            if tasker is None:
+                return False
+            self.task_status = "stopping"
+        # post_stop 可能在框架线程触发回调，不能在持有 state.lock 时调用
+        tasker.post_stop()
+        self.log("请求停止")
+        return True
 
     def status(self) -> dict:
         with self.lock:
@@ -185,6 +328,10 @@ def make_handler(state: BridgeState):
                         self._send(500, b"capture failed", "text/plain")
                 except Exception as exc:
                     self._send(500, str(exc).encode("utf-8"), "text/plain")
+            elif path == "/api/tasks":
+                tasks = discover_tasks(state.resource_path)
+                self._send(200, json.dumps({"tasks": tasks}, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -194,19 +341,13 @@ def make_handler(state: BridgeState):
                 try:
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")
-                    state.entry = body.get("entry") or "StartUp"
-                    state.running = True
-                    state.task_status = "pending"
-                    state.log("开始任务: " + state.entry)
-                    self._send(200, b"ok", "text/plain")
+                    ok, msg = state.request_start(body.get("entry") or "")
+                    self._send(200 if ok else 409, msg.encode("utf-8"), "text/plain")
                 except Exception as exc:
                     self._send(500, str(exc).encode("utf-8"), "text/plain")
             elif path == "/api/stop":
                 try:
-                    if state.tasker is not None:
-                        state.tasker.post_stop()
-                        state.task_status = "stopping"
-                        state.log("请求停止")
+                    state.request_stop()
                     self._send(200, b"ok", "text/plain")
                 except Exception as exc:
                     self._send(500, str(exc).encode("utf-8"), "text/plain")
@@ -228,7 +369,9 @@ def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
     args = ap.parse_args()
-    srv = start_server(BridgeState(), args.host, args.port)
+    state = BridgeState()
+    state.resource_path = os.environ.get("MAAI_RESOURCE", "resource")
+    srv = start_server(state, args.host, args.port)
     print("webui on http://%s:%d" % (args.host, args.port))
     try:
         while True:

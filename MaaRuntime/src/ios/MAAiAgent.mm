@@ -41,6 +41,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   dispatch_queue_t _workQueue;
   BOOL _started;
   BOOL _retryScheduled;
+  BOOL _taskActive;    // 服务器任务执行中（仅在 _workQueue 上读写）
+  BOOL _pendingStart;  // 按钮"连接并开始"：连上后自动发 start
 }
 
 + (instancetype)shared {
@@ -62,6 +64,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     _streamEnabled = NO;
     _started = NO;
     _retryScheduled = NO;
+    _taskActive = NO;
+    _pendingStart = NO;
     _workQueue = dispatch_queue_create("com.maai.agent", DISPATCH_QUEUE_SERIAL);
     _capture = [[MAAScreenCapture alloc] init];
     _capture.maxFPS = _screenshotFPS;
@@ -81,6 +85,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   if (self.overlayEnabled) [self.overlay show];
   __weak MAAiAgent* ws = self;
   self.overlay.onSettingsTap = ^{ [ws showServerSettings]; };
+  self.overlay.onStartTap = ^{ [ws startButtonTapped]; };
   [self.overlay setConnected:NO host:self.serverHost];
   [self.overlay setAction:@"等待服务器..."];
   dispatch_async(_workQueue, ^{
@@ -94,6 +99,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   dispatch_async(_workQueue, ^{
     self->_started = NO;
     self->_retryScheduled = NO;
+    self->_pendingStart = NO;
+    self->_taskActive = NO;
     if (self->_client) { self->_client->disconnect(); self->_client.reset(); }
   });
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -116,6 +123,49 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     [self stop];
     [self startWithHost:h port:p];
   }];
+}
+
+#pragma mark - 浮层"连接并开始"按钮
+
+// 状态与发送统一走 _workQueue，避免多线程读写 _taskActive/_pendingStart
+- (void)startButtonTapped {
+  if (!self.serverHost.length) {
+    [self showServerSettings];
+    return;
+  }
+  dispatch_async(_workQueue, ^{
+    if (!self->_started) {
+      self->_pendingStart = YES;
+      [self startWithHost:self.serverHost port:self.serverPort];
+      return;
+    }
+    if (!self->_client || !self->_client->connected()) {
+      self->_pendingStart = YES;  // 连上后自动补发 TASK_CONTROL start
+      [self attemptConnect];      // 立即重试，不等 3s 定时器
+      return;
+    }
+    if (self->_taskActive) {
+      [self sendTaskControl:@"stop"];
+    } else {
+      [self sendTaskControl:@"start"];
+    }
+  });
+}
+
+// entry 留空 = 服务器沿用 webui 已选任务
+- (void)sendTaskControl:(NSString*)action {
+  [self sendEvent:@"TASK_CONTROL" payload:{{"action", action.UTF8String ?: ""}}];
+  [self setTaskActive:[action isEqualToString:@"start"]];
+}
+
+- (void)setTaskActive:(BOOL)active {
+  dispatch_async(_workQueue, ^{
+    if (self->_taskActive == active) return;
+    self->_taskActive = active;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self.overlay setTaskActive:active];
+    });
+  });
 }
 
 - (void)setScreenshotFPS:(NSInteger)fps {
@@ -149,7 +199,12 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     });
     if (connected) {
       [s sendStatus];
+      if (s->_pendingStart) {
+        s->_pendingStart = NO;
+        [s sendTaskControl:@"start"];  // 按钮触发的连接：连上即开始
+      }
     } else {
+      [s setTaskActive:NO];  // 断线时任务必然已中止
       [s scheduleRetry];
     }
   });
@@ -264,7 +319,15 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   }
   if ([cmd isEqualToString:@"DISPLAY"]) {
     std::string s = p.value("text", "");
-    [self.overlay setAction:[NSString stringWithUTF8String:s.c_str()]];
+    NSString* text = [NSString stringWithUTF8String:s.c_str()];
+    [self.overlay setAction:text];
+    // 由服务器推送的任务进度同步按钮状态：
+    // "执行: X"=任务进行中；"任务完成/失败"=已结束
+    if ([text hasPrefix:@"执行:"]) {
+      [self setTaskActive:YES];
+    } else if ([text containsString:@"任务完成"] || [text containsString:@"任务失败"]) {
+      [self setTaskActive:NO];
+    }
     [self respond:reqId ok:YES result:nlohmann::json() error:nil];
     return;
   }
@@ -399,11 +462,12 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 
   MAAiAgent* agent = [MAAiAgent shared];
   if (!host.length) {
-    // 第一次使用：还没配置服务器。仍然显示浮窗，让用户点浮窗标签设置地址。
+    // 第一次使用：还没配置服务器。仍然显示浮窗，按钮/标签点击都弹设置。
     dispatch_async(dispatch_get_main_queue(), ^{
       if (agent.overlayEnabled) [agent.overlay show];
       __weak MAAiAgent* wa = agent;
       agent.overlay.onSettingsTap = ^{ [wa showServerSettings]; };
+      agent.overlay.onStartTap = ^{ [wa showServerSettings]; };
       [agent.overlay setConnected:NO host:@"未配置"];
       [agent.overlay setAction:@"点击设置服务器"];
     });

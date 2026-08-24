@@ -159,7 +159,6 @@ def run_agent_task(
     state: 可选的 webui.BridgeState，用于上报进度/启停。
     """
     if state:
-        state.running = True
         state.task_status = "running"
         state.entry = entry
         state.log("加载资源: " + str(resource_path))
@@ -189,12 +188,17 @@ def run_agent_task(
 
     if state:
         state.tasker = tasker
+        state.running = True  # 前置检查全部通过，正式开跑
     sink = AgentDisplaySink(agent, state=state)
     tasker.add_sink(sink)
 
-    detail = tasker.post_task(entry, pipeline_override).wait().get()
-    if state:
-        state.tasker = None
-        state.running = False
-        state.task_status = "done"
+    try:
+        detail = tasker.post_task(entry, pipeline_override).wait().get()
+    finally:
+        # 无论正常结束还是异常，都必须清掉 tasker，
+        # 否则 state.request_start 的运行中守卫会永久拒绝新任务
+        if state:
+            state.tasker = None
+            state.running = False
+            state.task_status = "done"
     return detail

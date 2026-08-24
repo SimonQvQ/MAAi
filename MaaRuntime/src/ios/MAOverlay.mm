@@ -24,7 +24,10 @@
 @property(nonatomic, strong) UIWindow* window;
 @property(nonatomic, strong) UILabel* statusLabel;
 @property(nonatomic, strong) UILabel* actionLabel;
+@property(nonatomic, strong) UIButton* startButton;
 @property(nonatomic, strong) NSString* lastHost;
+@property(nonatomic, assign) BOOL connected;
+@property(nonatomic, assign) BOOL taskActive;
 @end
 
 @implementation MAOverlay
@@ -76,9 +79,21 @@
   _actionLabel.layer.cornerRadius = 8;
   _actionLabel.clipsToBounds = YES;
 
+  CGFloat bw = 132, bh = 30;
+  _startButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  _startButton.frame = CGRectMake(x + labelW - bw, y + 52, bw, bh);
+  _startButton.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+  _startButton.layer.cornerRadius = bh / 2;
+  _startButton.clipsToBounds = YES;
+  [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+  _startButton.backgroundColor = [UIColor colorWithRed:0.15 green:0.35 blue:0.85 alpha:0.85];
+  [_startButton addTarget:self action:@selector(startTapped) forControlEvents:UIControlEventTouchUpInside];
+  [self refreshStartButton];
+
   [w.rootViewController.view addSubview:_statusLabel];
   [w.rootViewController.view addSubview:_actionLabel];
-  w.tappableViews = @[ _statusLabel, _actionLabel ];
+  [w.rootViewController.view addSubview:_startButton];
+  w.tappableViews = @[ _statusLabel, _actionLabel, _startButton ];
   return w;
 }
 
@@ -98,6 +113,26 @@
   if (_onSettingsTap) _onSettingsTap();
 }
 
+- (void)startTapped {
+  if (_onStartTap) _onStartTap();
+}
+
+// 按钮文案随 连接状态 / 任务状态 变化
+- (void)refreshStartButton {
+  NSString* title;
+  if (!_connected) {
+    title = @"▶ 连接并开始";
+  } else if (_taskActive) {
+    title = @"■ 停止任务";
+  } else {
+    title = @"▶ 开始任务";
+  }
+  [_startButton setTitle:title forState:UIControlStateNormal];
+  _startButton.backgroundColor = _taskActive
+      ? [UIColor colorWithRed:0.85 green:0.25 blue:0.20 alpha:0.9]
+      : [UIColor colorWithRed:0.15 green:0.35 blue:0.85 alpha:0.85];
+}
+
 - (void)show {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (!_window) { _window = [self buildWindow]; }
@@ -113,14 +148,25 @@
 - (void)setConnected:(BOOL)connected host:(NSString*)host {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (host) _lastHost = [host copy];
+    _connected = connected;
+    if (!connected) _taskActive = NO;  // 断线时任务必然已中止
     NSString* dot = connected ? @"● 已连接" : @"○ 未连接";
     _statusLabel.text = [NSString stringWithFormat:@"MAAi %@  %@ · 点击设置", dot, _lastHost];
+    [self refreshStartButton];
   });
 }
 
 - (void)setAction:(NSString*)action {
   dispatch_async(dispatch_get_main_queue(), ^{
     _actionLabel.text = action && action.length ? action : @"就绪";
+  });
+}
+
+- (void)setTaskActive:(BOOL)active {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (_taskActive == active) return;
+    _taskActive = active;
+    [self refreshStartButton];
   });
 }
 
