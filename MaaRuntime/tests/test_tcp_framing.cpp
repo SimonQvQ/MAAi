@@ -2,7 +2,8 @@
 //   1) 跨多次 send 的大帧（>64KB 读缓冲）服务端必须能重组，不能丢帧；
 //   2) 坏 JSON 帧（长度前缀合法、内容非法）必须被跳过且流不失步——服务端与客户端两侧；
 //   3) 声明超长的帧头必须立即断开连接；
-//   4) 客户端正常断开后服务端必须存活并回收会话（closeClient 曾 join 自己导致 terminate）。
+//   4) 客户端断开（服务端主动丢弃 + 正常关闭两条路径）后服务端必须存活并回收会话
+//      （closeClient 曾 join 自己导致 terminate）。
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -12,7 +13,6 @@
 #include <cassert>
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -78,16 +78,16 @@ int main() {
   // ---------- 场景 1: 跨 send 边界的大帧 ----------
   TcpServer server("127.0.0.1", kPort);
   std::atomic<int> bigFrameResult{0};  // 1=匹配 0=未到 -1=损坏
+  std::atomic<int> afterBadCount{0};
   const std::string bigPayload(300000, 'x');  // 300KB，远超 64KB 读缓冲
 
-  std::string lastCmd;
   server.setMessageHandler([&](const nlohmann::json& req) {
     std::string cmd = req.value("cmd", "");
     if (cmd == "BIG") {
       std::string data = req.value("params", nlohmann::json::object()).value("data", "");
       bigFrameResult.store(data == bigPayload ? 1 : -1);
-    } else {
-      lastCmd = cmd;
+    } else if (cmd == "AFTER_BAD") {
+      afterBadCount.fetch_add(1);
     }
     return nlohmann::json{{"v", 1}, {"type", "response"}, {"ok", true}};
   });
@@ -114,7 +114,7 @@ int main() {
   frame = encodeFrame(nlohmann::json{{"v", 1}, {"type", "request"},
                                      {"req_id", "r2"}, {"cmd", "AFTER_BAD"}});
   assert(sendRaw(fd, frame.data(), frame.size()));
-  assert(waitFor([&] { return lastCmd == "AFTER_BAD"; }, 5000) &&
+  assert(waitFor([&] { return afterBadCount.load() > 0; }, 5000) &&
          "server stalled after a malformed JSON frame");
   std::cout << "[2] server skips malformed frame, stream stays in sync: OK\n";
 
@@ -156,13 +156,20 @@ int main() {
          "client stalled after a malformed frame");
   std::cout << "[4] client skips malformed frame, receives following frames: OK\n";
 
-  // ---------- 场景 4: 客户端断开，服务端存活并回收 ----------
+  // ---------- 场景 4: 客户端正常断开（recv 返回 0），服务端存活并回收 ----------
   client.disconnect();
   ::close(cfd);
   ::close(lfd);
+
+  // 场景 3 走的是"服务端主动丢弃"路径；这里补"客户端正常关闭"路径，
+  // 两者都经由 clientLoop -> closeClient（历史上 join 自己导致 terminate 的入口）。
+  int fd2 = rawConnect(kPort);
+  assert(fd2 >= 0);
+  assert(waitFor([&] { return server.clientCount() == 1; }, 2000));
+  ::close(fd2);  // 正常关闭连接
   assert(waitFor([&] { return server.clientCount() == 0; }, 5000) &&
-         "server did not reap disconnected client (or crashed)");
-  std::cout << "[5] server survives client disconnect, reaps session: OK\n";
+         "server did not reap normally-disconnected client (or crashed)");
+  std::cout << "[5] server survives normal disconnect, reaps session: OK\n";
 
   server.stop();
   std::cout << "test_tcp_framing: all assertions passed\n";
