@@ -60,10 +60,8 @@ jobs:
         run: corepack enable && corepack prepare pnpm@11 --activate
       - name: Clone MWU (固定 55064a1) + patch + build web
         run: |
-          git init -q mwu_src && cd mwu_src
-          git fetch -q --depth 1 https://github.com/ravizhan/MWU.git 55064a1
-          git checkout -q FETCH_HEAD
-          cd ..
+          curl -fsSL https://github.com/ravizhan/MWU/archive/55064a1.tar.gz -o mwu.tar.gz
+          mkdir -p mwu_src && tar -xzf mwu.tar.gz -C mwu_src --strip-components=1
           bash maai-server/mwu/build_mwu_web.sh maai-server/mwu mwu_src
       - name: 上传 MWU page 产物
         uses: actions/upload-artifact@v4
@@ -144,10 +142,8 @@ jobs:
           echo "MAA5_RES_URL=https://github.com/MaaAssistantArknights/MaaAssistantArknights/releases/download/v5.12.2/MAA-v5.12.2-win-x64.zip" >> "$GITHUB_ENV"
       - name: Clone MWU (固定 55064a1) + patch backend
         run: |
-          git init -q mwu_src && cd mwu_src
-          git fetch -q --depth 1 https://github.com/ravizhan/MWU.git 55064a1
-          git checkout -q FETCH_HEAD
-          cd ..
+          curl -fsSL https://github.com/ravizhan/MWU/archive/55064a1.tar.gz -o mwu.tar.gz
+          mkdir -p mwu_src && tar -xzf mwu.tar.gz -C mwu_src --strip-components=1
           python3 maai-server/mwu/patch_backend.py mwu_src maai-server/mwu
       - name: Prepare Docker context
         run: |
