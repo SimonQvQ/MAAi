@@ -74,6 +74,7 @@ git tag v0.01b && git push origin v0.01b
 
 - 版本号统一为 **0.01b**（`MaaRuntime/src/core/version.h` 的 `MAAI_VERSION`、`interface.json`、Release 均一致）。
 - `maai-server/mwu/`：MAAi×MWU 集成（`maa_bridge.py` 通道 + `maa_controller.py` 自定义控制器 + 前后端 patch 脚本 + `interface.json` 任务组合/预设）。
+- **MWU 固定 commit `55064a1`**（含新架构连接逻辑）：workflow 按该 commit 浅克隆，patch 锚点与前端构建均以此为准，避免上游变更破坏构建。
 - 仓库 Secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（发布）、`MAAFW_URL` / `MAA5_RES_URL`（资源下载，均可选）。
 
 ## 协议（MAAi 便捷线格式）
