@@ -263,8 +263,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   }
   if ([cmd isEqualToString:@"SET_STREAM"]) {
     bool on = p.value("enable", false);
-    if (p.contains("fps")) _capture.maxFPS = (NSInteger)p.value("fps", 5);
-    if (p.contains("quality")) _capture.jpegQuality = (NSInteger)p.value("quality", 70);
+    if (p.contains("fps")) self.screenshotFPS = (NSInteger)p.value("fps", 5);
+    if (p.contains("quality")) self.jpegQuality = (NSInteger)p.value("quality", 70);
     _streamEnabled = on;
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.streamEnabled) [self startStreamTimer]; else [self stopStreamTimer];

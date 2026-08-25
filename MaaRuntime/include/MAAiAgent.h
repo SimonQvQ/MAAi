@@ -21,7 +21,7 @@ typedef struct MAAiAgentConfig {
 int MAAiAgentStart(const MAAiAgentConfig* config);
 int MAAiAgentStop(void);
 int MAAiAgentIsRunning(void);
-const char* MAAiAgentVersion(void); // "0.2.0"
+const char* MAAiAgentVersion(void); // "0.01b"
 
 #ifdef __cplusplus
 }

@@ -61,16 +61,18 @@ docker run -d --name maai \
 
 ## 构建与发布
 
-所有构建都在 **GitHub Actions** 完成（本地/群晖不编译）：
+所有构建都在 **GitHub Actions** 完成（本地/群晖不编译），单个 workflow（`ci.yml`）串起全部：
 
 ```bash
-# 推 main 触发 CI：dylib 交叉编译 + Linux 运行时 + MWU Docker 镜像构建验证
+# 推 main：runtime-core 测试 + iOS 交叉编译 + Docker 镜像构建/冒烟，
+#          并把最新 MAAiAgent.dylib 自动发布到 Release（continuous，每次覆盖）
 git push origin main
 
-# 打 tag 触发发布：MWU Web 前端 + Docker 镜像推到 Docker Hub (latest)
-git tag v0.1.6 && git push origin v0.1.6
+# 打 tag 触发正式发布：dylib 发布到该 tag 的 Release + Docker 镜像推到 Docker Hub
+git tag v0.01b && git push origin v0.01b
 ```
 
+- 版本号统一为 **0.01b**（`MaaRuntime/src/core/version.h` 的 `MAAI_VERSION`、`interface.json`、Release 均一致）。
 - `maai-server/mwu/`：MAAi×MWU 集成（`maa_bridge.py` 通道 + `maa_controller.py` 自定义控制器 + 前后端 patch 脚本 + `interface.json` 任务组合/预设）。
 - 仓库 Secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（发布）、`MAAFW_URL` / `MAA5_RES_URL`（资源下载，均可选）。
 

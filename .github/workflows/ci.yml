@@ -1,7 +1,9 @@
-name: CI
+name: Build & Release
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -34,13 +36,16 @@ jobs:
             -DMAAI_BUILD_IOS_AGENT=ON -DMAAI_ENABLE_TESTS=OFF
       - name: 编译 MAAiAgent.dylib（免签名）
         run: cmake --build build-ios --config Release --target MAAiAgent -- CODE_SIGNING_ALLOWED=NO
-      - name: 定位 dylib 产物
-        run: find build-ios -name "*.dylib"
+      - name: 定位并固定 dylib 产物名
+        run: |
+          DYLIB="$(find build-ios -name "libMAAiAgent.dylib" | head -1)"
+          test -n "$DYLIB"
+          cp "$DYLIB" MAAiAgent.dylib
       - name: 上传 dylib 产物
         uses: actions/upload-artifact@v4
         with:
           name: MAAiAgent-dylib
-          path: build-ios/**/*.dylib
+          path: MAAiAgent.dylib
           if-no-files-found: error
 
   docker:
@@ -57,6 +62,12 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ravizhan/MWU.git mwu_src
           bash maai-server/mwu/build_mwu_web.sh maai-server/mwu mwu_src
+      - name: 上传 MWU page 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mwu-page
+          path: mwu_src/page
+          retention-days: 7
       - name: Prepare Docker context
         run: |
           mkdir -p ctx/page
@@ -74,7 +85,103 @@ jobs:
           ok=0
           for i in $(seq 1 60); do
             if curl -sf -o /dev/null http://127.0.0.1:18080/api/interface; then ok=1; break; fi
-            if ! docker ps --filter name=maai-smoke --format '{{.Status}}' | grep -q Up; then
+            if ! docker ps --filter name=maai-smoke --format {{.Status}} | grep -q Up; then
+              echo "== container died =="; docker logs maai-smoke 2>&1 | tail -60; exit 1
+            fi
+            sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "== MWU never responded =="; docker logs maai-smoke 2>&1 | tail -60; exit 1; }
+          echo "== MWU /api/interface =="; curl -sf http://127.0.0.1:18080/api/interface | head -c 300; echo
+          echo "== MaaFramework native lib load =="
+          docker exec maai-smoke python3 -c 'import maa; from maa.resource import Resource; print("maafw lib OK")'
+          echo "== agent port 17171 bindable =="
+          docker exec maai-smoke python3 -c 'import socket; s=socket.socket(); s.bind(("0.0.0.0",17171)); s.close(); print("17171 OK")'
+          docker rm -f maai-smoke
+
+  release-dylib:
+    name: 发布 dylib 到 Release
+    if: github.event_name != 'pull_request'
+    needs: agent-dylib
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MAAiAgent-dylib
+      - name: 发布 MAAiAgent.dylib
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'continuous' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'MAAiAgent dylib (continuous)' }}
+          body: |
+            MAAiAgent.dylib —— iOS 端注入代理（截图/触摸/浮层）
+            - 版本: 0.01b
+            - 协议: MAAi 便捷线格式（4 字节大端长度 + JSON，TCP 17171）
+            - 用法: 注入明日方舟进程（LiveContainer / 越狱），填 Docker 服务器地址后自动拨号
+          files: MAAiAgent.dylib
+          allow_updates: true
+          force: true
+          fail_on_unmatched_files: true
+
+  publish-dockerhub:
+    name: 发布镜像到 Docker Hub
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [runtime-core, agent-dylib, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download page artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mwu-page
+          path: page
+      - name: Resolve resource URLs
+        run: |
+          echo "MAA5_RES_URL=https://github.com/MaaAssistantArknights/MaaAssistantArknights/releases/download/v5.12.2/MAA-v5.12.2-win-x64.zip" >> "$GITHUB_ENV"
+      - name: Clone MWU + patch backend
+        run: |
+          git clone --depth 1 https://github.com/ravizhan/MWU.git mwu_src
+          python3 maai-server/mwu/patch_backend.py mwu_src maai-server/mwu
+      - name: Prepare Docker context
+        run: |
+          mkdir -p ctx/page
+          cp -r mwu_src ctx/mwu_src
+          cp -r page/. ctx/page/
+          cp maai-server/Dockerfile.mwu ctx/Dockerfile
+          cp maai-server/fetch_official_resources.sh maai-server/convert_maares.py ctx/
+          cp maai-server/mwu/interface.json ctx/interface.json
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./ctx
+          push: true
+          load: true
+          platforms: linux/amd64
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/maai-server:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/maai-server:${{ github.ref_name }}
+          build-args: |
+            MAAFW_URL=${{ secrets.MAAFW_URL }}
+            MAA5_RES_URL=${{ secrets.MAA5_RES_URL || env.MAA5_RES_URL }}
+      - name: Smoke test pushed image (container boots + MWU responds + MaaFramework loads)
+        run: |
+          set -euxo pipefail
+          IMG=${{ secrets.DOCKERHUB_USERNAME }}/maai-server:latest
+          docker run -d --name maai-smoke -p 18080:8080 "$IMG"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:18080/api/interface; then ok=1; break; fi
+            if ! docker ps --filter name=maai-smoke --format {{.Status}} | grep -q Up; then
               echo "== container died =="; docker logs maai-smoke 2>&1 | tail -60; exit 1
             fi
             sleep 2

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """生成 MAAi interface.json（含完整任务设置 option，定义源自 MAA-Meow）。"""
 import json
+from pathlib import Path
 
 OPT = {}  # name -> Option dict
 
@@ -85,7 +86,7 @@ iface = {
     "interface_version": 2,
     "name": "MAAi",
     "label": "MAAi 明日方舟助手",
-    "version": "0.1.9",
+    "version": "0.01b",
     "github": "https://github.com/SimonQvQ/MAAi",
     "description": "iPhone 端明日方舟自动化（Docker 服务端 + MAA 官方资源；任务设置定义源自 MAA-Meow）",
     "controller": [
@@ -103,7 +104,7 @@ iface = {
     ],
 }
 
-out = "/root/maa/maai-server/mwu/interface.json"
+out = str(Path(__file__).resolve().parent / "interface.json")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(iface, f, ensure_ascii=False, indent=2)
 print("written", out, "options:", len(OPT), "tasks:", len(TASKS))

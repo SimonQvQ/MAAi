@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MAAi VERSION 0.2.0 LANGUAGES CXX)
+project(MAAi LANGUAGES CXX)  # 版本号统一由 src/core/version.h 的 MAAI_VERSION 定义（当前 0.01b）
 
 # MAAi —— iOS 版明日方舟小助手（Docker 架构）
 #

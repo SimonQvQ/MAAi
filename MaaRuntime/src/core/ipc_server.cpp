@@ -136,7 +136,14 @@ void TcpServer::closeClient(int fd) {
   }
   ::shutdown(fd, SHUT_RDWR);
   ::close(fd);
-  if (t.joinable()) t.join();
+  if (t.joinable()) {
+    if (t.get_id() == std::this_thread::get_id()) {
+      // clientLoop 断连路径会清理自身句柄：不能 join 自己（会 system_error/terminate），detach 即可（线程即将结束）。
+      t.detach();
+    } else {
+      t.join();
+    }
+  }
 }
 
 void TcpServer::clientLoop(int fd, const std::string& peer) {
