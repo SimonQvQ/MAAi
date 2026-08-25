@@ -186,7 +186,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   if (!_client || !_client->connected()) return;
   nlohmann::json r;
   r["v"] = maai::ipc::kProtocolVersion;
-  r["type"] = ok ? "response" : "response";
+  r["type"] = "response";
   r["req_id"] = reqId ? reqId.UTF8String : "";
   r["ok"] = ok;
   r["result"] = result;

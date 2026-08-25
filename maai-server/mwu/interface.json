@@ -2,9 +2,9 @@
   "interface_version": 2,
   "name": "MAAi",
   "label": "MAAi 明日方舟助手",
-  "version": "0.1.5",
+  "version": "0.1.9",
   "github": "https://github.com/SimonQvQ/MAAi",
-  "description": "iPhone 端明日方舟自动化（Docker 服务端 + MAA 官方资源）",
+  "description": "iPhone 端明日方舟自动化（Docker 服务端 + MAA 官方资源；任务设置定义源自 MAA-Meow）",
   "controller": [
     {
       "name": "iPhone",
@@ -17,31 +17,634 @@
     {
       "name": "MAA",
       "label": "MAA 官方资源 (v5.12.2 转换)",
-      "path": ["resource"]
+      "path": [
+        "resource"
+      ]
     }
   ],
   "task": [
-    { "name": "启动游戏", "entry": "StartUp" },
-    { "name": "每日任务", "entry": "DailyTask" },
-    { "name": "刷理智", "entry": "Fight" },
-    { "name": "领取奖励", "entry": "Award" },
-    { "name": "公开招募", "entry": "Recruit" },
-    { "name": "基建换班", "entry": "Infrast" },
-    { "name": "访问好友", "entry": "Visit" },
-    { "name": "信用商店", "entry": "Mall" },
-    { "name": "集成战略", "entry": "Roguelike" }
+    {
+      "name": "启动游戏",
+      "entry": "StartUp",
+      "option": []
+    },
+    {
+      "name": "每日任务",
+      "entry": "DailyTask",
+      "option": []
+    },
+    {
+      "name": "刷理智",
+      "entry": "Fight",
+      "option": [
+        "刷理智使用理智药",
+        "刷理智药数量",
+        "刷理智使用源石",
+        "刷理智限制次数",
+        "刷理智最大次数"
+      ]
+    },
+    {
+      "name": "领取奖励",
+      "entry": "Award",
+      "option": [
+        "领取每日周常奖励",
+        "领取邮件奖励",
+        "领取免费单抽",
+        "领取幸运墙合成玉",
+        "领取挖矿合成玉",
+        "领取周年月卡"
+      ]
+    },
+    {
+      "name": "公开招募",
+      "entry": "Recruit",
+      "option": [
+        "公招刷新三星",
+        "公招强制刷新",
+        "公招使用加急许可",
+        "公招最大次数",
+        "公招额外Tag策略",
+        "公招选三星",
+        "公招三星时长",
+        "公招选四星",
+        "公招四星时长",
+        "公招选五星",
+        "公招保留词条"
+      ]
+    },
+    {
+      "name": "基建换班",
+      "entry": "Infrast",
+      "option": [
+        "基建无人机用途",
+        "基建宿舍阈值"
+      ]
+    },
+    {
+      "name": "访问好友",
+      "entry": "Visit",
+      "option": []
+    },
+    {
+      "name": "信用商店",
+      "entry": "Mall",
+      "option": [
+        "信用访问好友",
+        "信用战斗",
+        "信用购物",
+        "信用优先购买",
+        "信用黑名单",
+        "信用仅买折扣"
+      ]
+    },
+    {
+      "name": "集成战略",
+      "entry": "Roguelike",
+      "option": []
+    }
   ],
+  "option": {
+    "公招刷新三星": {
+      "type": "switch",
+      "label": "刷新三星Tag",
+      "description": "出现非稀有/高资三星Tag时自动刷新",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "公招强制刷新": {
+      "type": "switch",
+      "label": "强制刷新",
+      "description": "招募券用完后强制刷新",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "公招使用加急许可": {
+      "type": "switch",
+      "label": "使用加急许可",
+      "description": "招募完成后自动使用加急许可",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "公招最大次数": {
+      "type": "input",
+      "label": "最大招募次数",
+      "description": "连续招募的最大次数",
+      "inputs": [
+        {
+          "name": "times",
+          "pipeline_type": "int",
+          "default": "4"
+        }
+      ],
+      "default_case": "4"
+    },
+    "公招额外Tag策略": {
+      "type": "select",
+      "label": "额外Tag策略",
+      "description": "自动公招选择额外Tag的策略",
+      "cases": [
+        {
+          "name": "0",
+          "label": "不选择额外Tag"
+        },
+        {
+          "name": "1",
+          "label": "选择额外Tag"
+        },
+        {
+          "name": "2",
+          "label": "仅选择稀有Tag"
+        }
+      ],
+      "default_case": "0"
+    },
+    "公招选三星": {
+      "type": "switch",
+      "label": "自动选择三星",
+      "description": "识别到三星词条时自动招募",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "公招三星时长": {
+      "type": "select",
+      "label": "三星招募时长",
+      "cases": [
+        {
+          "name": "1",
+          "label": "1 小时"
+        },
+        {
+          "name": "2",
+          "label": "2 小时"
+        },
+        {
+          "name": "3",
+          "label": "3 小时"
+        },
+        {
+          "name": "4",
+          "label": "4 小时"
+        },
+        {
+          "name": "5",
+          "label": "5 小时"
+        },
+        {
+          "name": "6",
+          "label": "6 小时"
+        },
+        {
+          "name": "7",
+          "label": "7 小时"
+        },
+        {
+          "name": "8",
+          "label": "8 小时"
+        },
+        {
+          "name": "9",
+          "label": "9 小时"
+        }
+      ],
+      "default_case": "9"
+    },
+    "公招选四星": {
+      "type": "switch",
+      "label": "自动选择四星",
+      "description": "识别到四星词条时自动招募",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "公招四星时长": {
+      "type": "select",
+      "label": "四星招募时长",
+      "cases": [
+        {
+          "name": "1",
+          "label": "1 小时"
+        },
+        {
+          "name": "2",
+          "label": "2 小时"
+        },
+        {
+          "name": "3",
+          "label": "3 小时"
+        },
+        {
+          "name": "4",
+          "label": "4 小时"
+        },
+        {
+          "name": "5",
+          "label": "5 小时"
+        },
+        {
+          "name": "6",
+          "label": "6 小时"
+        },
+        {
+          "name": "7",
+          "label": "7 小时"
+        },
+        {
+          "name": "8",
+          "label": "8 小时"
+        },
+        {
+          "name": "9",
+          "label": "9 小时"
+        }
+      ],
+      "default_case": "9"
+    },
+    "公招选五星": {
+      "type": "switch",
+      "label": "自动选择五星",
+      "description": "识别到五星词条时自动招募",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "公招保留词条": {
+      "type": "switch",
+      "label": "保留词条",
+      "description": "启用保留词条（避免误选，默认保留支援机械）",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "刷理智使用理智药": {
+      "type": "switch",
+      "label": "使用理智药",
+      "description": "理智不足时自动使用理智药",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "刷理智药数量": {
+      "type": "input",
+      "label": "理智药数量",
+      "description": "本次最多使用的理智药数量",
+      "inputs": [
+        {
+          "name": "n",
+          "pipeline_type": "int",
+          "default": "999"
+        }
+      ],
+      "default_case": "999"
+    },
+    "刷理智使用源石": {
+      "type": "switch",
+      "label": "使用源石",
+      "description": "理智不足时使用源石",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "刷理智限制次数": {
+      "type": "switch",
+      "label": "限制次数",
+      "description": "限制本次作战次数",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "刷理智最大次数": {
+      "type": "input",
+      "label": "最大次数",
+      "description": "本次最多作战次数",
+      "inputs": [
+        {
+          "name": "times",
+          "pipeline_type": "int",
+          "default": "5"
+        }
+      ],
+      "default_case": "5"
+    },
+    "领取每日周常奖励": {
+      "type": "switch",
+      "label": "领取每日/每周任务奖励",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "领取邮件奖励": {
+      "type": "switch",
+      "label": "领取所有邮件奖励",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "领取免费单抽": {
+      "type": "switch",
+      "label": "进行每日免费单抽",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "领取幸运墙合成玉": {
+      "type": "switch",
+      "label": "领取幸运墙合成玉",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "领取挖矿合成玉": {
+      "type": "switch",
+      "label": "领取挖矿合成玉",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "领取周年月卡": {
+      "type": "switch",
+      "label": "领取周年特殊月卡",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "基建无人机用途": {
+      "type": "select",
+      "label": "无人机用途",
+      "description": "无人机加速的目标",
+      "cases": [
+        {
+          "name": "Money",
+          "label": "龙门币"
+        },
+        {
+          "name": "SyntheticJade",
+          "label": "合成玉"
+        },
+        {
+          "name": "CombatRecord",
+          "label": "作战记录"
+        },
+        {
+          "name": "PureGold",
+          "label": "赤金"
+        }
+      ],
+      "default_case": "Money"
+    },
+    "基建宿舍阈值": {
+      "type": "input",
+      "label": "宿舍信赖阈值",
+      "description": "低于该信赖值不换班",
+      "inputs": [
+        {
+          "name": "pct",
+          "pipeline_type": "int",
+          "default": "30"
+        }
+      ],
+      "default_case": "30"
+    },
+    "信用访问好友": {
+      "type": "switch",
+      "label": "访问好友",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "信用战斗": {
+      "type": "switch",
+      "label": "信用战斗",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    },
+    "信用购物": {
+      "type": "switch",
+      "label": "信用购物",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "true"
+    },
+    "信用优先购买": {
+      "type": "input",
+      "label": "优先购买",
+      "description": "逗号分隔，如：招聘许可,龙门币",
+      "inputs": [
+        {
+          "name": "items",
+          "pipeline_type": "string",
+          "default": "招聘许可,龙门币"
+        }
+      ],
+      "default_case": "招聘许可,龙门币"
+    },
+    "信用黑名单": {
+      "type": "input",
+      "label": "黑名单",
+      "description": "逗号分隔，如：碳,家具,加急许可",
+      "inputs": [
+        {
+          "name": "items",
+          "pipeline_type": "string",
+          "default": "碳,家具,加急许可"
+        }
+      ],
+      "default_case": "碳,家具,加急许可"
+    },
+    "信用仅买折扣": {
+      "type": "switch",
+      "label": "仅购买折扣商品",
+      "cases": [
+        {
+          "name": "true",
+          "label": "开启"
+        },
+        {
+          "name": "false",
+          "label": "关闭"
+        }
+      ],
+      "default_case": "false"
+    }
+  },
   "preset": [
     {
       "name": "oneclick",
       "label": "一键长草",
       "description": "启动游戏 → 每日任务 → 基建换班 → 公开招募 → 刷理智",
       "task": [
-        { "name": "启动游戏" },
-        { "name": "每日任务" },
-        { "name": "基建换班" },
-        { "name": "公开招募" },
-        { "name": "刷理智" }
+        {
+          "name": "启动游戏"
+        },
+        {
+          "name": "每日任务"
+        },
+        {
+          "name": "基建换班"
+        },
+        {
+          "name": "公开招募"
+        },
+        {
+          "name": "刷理智"
+        }
       ]
     }
   ]

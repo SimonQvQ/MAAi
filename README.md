@@ -51,8 +51,8 @@ docker run -d --name maai \
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `MAAI_WEB_PORT` | `8080` | MWU Web 控制台端口 |
-| `MAAI_BRIDGE_HOST` / `MAAI_BRIDGE_PORT` | `0.0.0.0` / `17171` | agent 通道监听 |
-| `MAAI_RESOURCE` | `/opt/maai/mwu/resource` | 转换后的 MaaFramework 资源包目录 |
+
+> agent 通道固定监听 `0.0.0.0:17171`（MWU 设备页地址默认 `0.0.0.0:17171`）；资源目录由 `interface.json` 的 resource path 决定（默认 `resource`，相对 `/opt/maai/mwu`）。
 
 ## 资源
 

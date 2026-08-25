@@ -1,15 +1,12 @@
 services:
   maai:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.mwu
     container_name: maai
     restart: unless-stopped
     ports:
-      - "17171:17171"      # MAAiAgent 通道（iPhone -> Docker）
-      - "5800:5800"        # 可选：VNC 看 MXU 界面（xvfb）
-    volumes:
-      - ./maafw:/opt/maai/maafw:ro
-      - ./resource:/opt/maai/resource:ro
-      - ./config:/opt/maai/config
+      - "17171:17171"   # MAAiAgent 通道（iPhone -> Docker）
+      - "8080:8080"     # MWU Web 控制台
     environment:
-      - MAAI_BRIDGE_HOST=0.0.0.0
-      - MAAI_BRIDGE_PORT=17171
+      - MAAI_WEB_PORT=8080
