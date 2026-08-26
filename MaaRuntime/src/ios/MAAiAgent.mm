@@ -14,6 +14,7 @@
 
 #include "core/ipc_client.h"
 #include "core/ipc_message.h"
+#include "core/log.h"
 #include "../../include/MAAiAgent.h" // C ABI (MAAiAgentConfig)
 
 #include <memory>
@@ -34,6 +35,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 @property(nonatomic, strong) MAOverlay* overlay;
 @property(nonatomic, strong) NSTimer* streamTimer;
 @property(nonatomic, assign) BOOL streamEnabled;
+@property(nonatomic, strong) NSTimer* heartbeatTimer;
+@property(nonatomic, assign) NSTimeInterval lastServerMsg;
 @end
 
 @implementation MAAiAgent {
@@ -60,6 +63,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
     _overlayEnabled = YES;
     _streamEnabled = NO;
     _retryScheduled = NO;
+    _lastServerMsg = [NSDate timeIntervalSinceReferenceDate];  // 连接前不触发误重连
     _workQueue = dispatch_queue_create("com.maai.agent", DISPATCH_QUEUE_SERIAL);
     _capture = [[MAAScreenCapture alloc] init];
     _capture.maxFPS = _screenshotFPS;
@@ -82,6 +86,15 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   [self.overlay setConnected:NO host:self.serverHost];
   [self.overlay setAction:@"等待服务器..."];
   dispatch_async(_workQueue, ^{ [self attemptConnect]; });
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self.heartbeatTimer invalidate];
+    self.heartbeatTimer =
+        [NSTimer scheduledTimerWithTimeInterval:10.0
+                                         target:self
+                                       selector:@selector(heartbeatTick)
+                                       userInfo:nil
+                                        repeats:YES];
+  });
   return YES;
 }
 
@@ -93,6 +106,8 @@ static NSString* GetEnv(NSString* key, NSString* def) {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self.streamTimer invalidate];
     self.streamTimer = nil;
+    [self.heartbeatTimer invalidate];
+    self.heartbeatTimer = nil;
   });
   [self.overlay setConnected:NO host:self.serverHost];
 }
@@ -141,6 +156,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
       [s.overlay setConnected:connected host:s.serverHost];
     });
     if (connected) {
+      s.lastServerMsg = [NSDate timeIntervalSinceReferenceDate];
       [s sendStatus];
     } else {
       [s scheduleRetry];
@@ -169,6 +185,7 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 
 - (void)handleMessage:(const nlohmann::json&)msg {
   if (!msg.is_object()) return;
+  self.lastServerMsg = [NSDate timeIntervalSinceReferenceDate];  // 心跳断线检测依据
   std::string type = msg.value("type", "");
   std::string reqId = msg.value("req_id", "");
   std::string cmd = msg.value("cmd", "");
@@ -316,6 +333,36 @@ static NSString* GetEnv(NSString* key, NSString* def) {
 
 - (void)sendStatus {
   [self sendEvent:@"STATUS" payload:[self statusPayload]];
+}
+
+#pragma mark - 心跳 / 半开连接检测
+
+// 每 10s：35s 未收到服务器任何帧 -> 判定 TCP 半开（Wi-Fi 切换/丢包），强制重连。
+// 服务器正常时 PING 有响应，lastServerMsg 会被持续刷新，不会误重连。
+- (void)heartbeatTick {
+  if (![self connected]) return;
+  NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+  if (now - self.lastServerMsg > 35.0) {
+    maai::Log::warn("heartbeat timeout: 35s no server frame, force reconnect");
+    dispatch_async(_workQueue, ^{
+      if (self->_client) self->_client->disconnect();
+      [self scheduleRetry];
+    });
+    return;
+  }
+  [self sendPing];
+}
+
+- (void)sendPing {
+  if (!_client || !_client->connected()) return;
+  static uint64_t hbSeq = 0;
+  nlohmann::json p;
+  p["v"] = maai::ipc::kProtocolVersion;
+  p["type"] = "request";
+  p["req_id"] = "hb-" + std::to_string(hbSeq++);
+  p["cmd"] = "PING";
+  p["params"] = nlohmann::json::object();
+  _client->send(p);
 }
 
 - (void)sendStatusReply:(NSString*)reqId {

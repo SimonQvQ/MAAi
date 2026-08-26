@@ -52,10 +52,12 @@ class AgentSession:
         self.buf = bytearray()
         self.connected = True
         self.last_status: dict = {}
+        self.last_active = time.time()  # 最近活跃时间（心跳/半开检测用）
         self._lock = threading.Lock()
         self._pending: dict[str, Queue] = {}
 
     def send(self, msg: dict):
+        self.last_active = time.time()
         with self._lock:
             self.sock.sendall(encode_frame(msg))
 
@@ -72,6 +74,7 @@ class AgentSession:
             self._pending.pop(req_id, None)
 
     def feed(self, data: bytes):
+        self.last_active = time.time()
         self.buf += data
         frames, self.buf = _try_decode(self.buf)
         for m in frames:
@@ -79,8 +82,21 @@ class AgentSession:
                 q = self._pending.get(m.get("req_id", ""))
                 if q:
                     q.put(m)
+            elif m.get("type") == "request":
+                self.handle_request(m)
             elif m.get("type") == "event":
                 self.handle_event(m)
+
+    def handle_request(self, m: dict):
+        """服务器端处理 agent 发来的请求（当前仅心跳 PING），保证双向保活。"""
+        cmd = m.get("cmd", "")
+        if cmd == "PING":
+            self.send({"v": 1, "type": "response",
+                       "req_id": m.get("req_id", ""), "ok": True, "result": {"pong": True}})
+        else:
+            _log(f"[agent {self.addr}] 忽略未知请求: {cmd}")
+            self.send({"v": 1, "type": "response",
+                       "req_id": m.get("req_id", ""), "ok": False, "result": {}})
 
     def handle_event(self, m: dict):
         ev = m.get("event", "")
@@ -89,7 +105,10 @@ class AgentSession:
             self.last_status = payload
             _log(f"[agent {self.addr}] STATUS {payload}")
         elif ev == "SCREENSHOT":
-            _log(f"[agent {self.addr}] SCREENSHOT event ({len(str(payload.get('data', ''))) } b64)")
+            # 高频流事件：限流打印，避免刷屏拖慢日志
+            self._ss_count = getattr(self, "_ss_count", 0) + 1
+            if self._ss_count % 50 == 1:
+                _log(f"[agent {self.addr}] SCREENSHOT stream (累计 {self._ss_count} 帧)")
         else:
             _log(f"[agent {self.addr}] event {ev}")
 
@@ -107,18 +126,35 @@ class AgentServer:
         self.sessions: list[AgentSession] = []
         self._lock = threading.Lock()
 
+    IDLE_TIMEOUT = 60.0  # 超过该时长无任何消息的会话视为死连接
+
     def start(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self.host, self.port))
         srv.listen(8)
         _log(f"监听 {self.host}:{self.port}，等待 MAAiAgent 拨入...")
+        threading.Thread(target=self._reaper, daemon=True).start()
         while True:
             sock, addr = srv.accept()
             s = AgentSession(sock, addr)
             with self._lock:
                 self.sessions.append(s)
             threading.Thread(target=self._reader, args=(s,), daemon=True).start()
+
+    def _reaper(self):
+        """周期清理死连接：iPhone 进程被杀/网络半开时 TCP 无 FIN，会残留死会话。"""
+        while True:
+            time.sleep(5.0)
+            now = time.time()
+            dead = []
+            with self._lock:
+                for s in self.sessions:
+                    if now - s.last_active > self.IDLE_TIMEOUT:
+                        dead.append(s)
+            for s in dead:
+                _log(f"[agent] {s.addr} 无消息超时，清理死连接")
+                s.close()  # 关闭后 _reader 的 recv 返回并移除会话
 
     def _reader(self, s: AgentSession):
         _log(f"[agent] {s.addr} 连接")
@@ -140,6 +176,24 @@ class AgentServer:
     def first_agent(self):
         with self._lock:
             return self.sessions[0] if self.sessions else None
+
+    def latest_agent(self, pref_addr: str | None = None):
+        """返回最活跃的可用会话；优先匹配与 pref_addr 相同地址的新会话。
+
+        用于断线自动恢复：iPhone 重连产生新 AgentSession，控制器按此切换，
+        无需用户手动重连。
+        """
+        with self._lock:
+            if not self.sessions:
+                return None
+            if pref_addr:
+                for s in reversed(self.sessions):
+                    if s.connected and s.addr == pref_addr:
+                        return s
+            for s in reversed(self.sessions):
+                if s.connected:
+                    return s
+            return None
 
 
 class MAAiBridge:
@@ -173,6 +227,9 @@ class MAAiBridge:
 
     def first_agent(self):
         return self.server.first_agent() if self.server else None
+
+    def latest_agent(self, pref_addr: str | None = None):
+        return self.server.latest_agent(pref_addr) if self.server else None
 
     def wait_for_agent(self, timeout: float = 120.0):
         """阻塞等待 iPhone MAAiAgent 拨入，返回 AgentSession 或 None。"""
