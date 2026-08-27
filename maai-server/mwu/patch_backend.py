@@ -126,6 +126,24 @@ def apply(ds: str) -> str:
     return ds
 
 
+def _patch_task_service(mwu: Path):
+    """把 MAAi 自研任务（公招）分发到 maa_recruit 执行器。"""
+    p = mwu / "maa_worker" / "task_service.py"
+    t = p.read_text(encoding="utf-8")
+    if "maa_recruit" in t:
+        print("[patch_backend] task_service.py already patched; skip")
+        return
+    a = (
+        '            for task in task_list:\n                if state.stop_flag:'
+    )
+    b = (
+        '            for task in task_list:\n                if task == "Recruit":\n                    from maa_worker import maa_recruit\n                    self.worker.events.send_log("正在运行任务: " + task)\n                    ok = maa_recruit.run_recruit_task(self.worker, options.get(task, {}))\n                    if ok:\n                        continue\n                    state.last_status = "failed"\n                    state.last_error = state.last_error or "公招任务失败"\n                    self.worker.events.emit_task_failed(task_list, state.last_error)\n                    return\n\n                if state.stop_flag:'
+    )
+    assert t.count(a) == 1, "task_service run_process anchor"
+    p.write_text(t.replace(a, b, 1), encoding="utf-8")
+    print("[patch_backend] task_service.py recruit dispatch added")
+
+
 def _patch_legacy_models(mwu: Path):
     p2 = mwu / "models" / "interface.py"
     t2 = p2.read_text(encoding="utf-8")
@@ -149,6 +167,9 @@ def main():
     src = Path(sys.argv[2])
     shutil.copy(src / "maa_bridge.py", mwu / "maa_worker" / "maa_bridge.py")
     shutil.copy(src / "maa_controller.py", mwu / "maa_worker" / "maa_controller.py")
+    shutil.copy(src / "recruit_runner.py", mwu / "maa_worker" / "maa_recruit.py")
+
+    _patch_task_service(mwu)
 
     p = mwu / "maa_worker" / "device_service.py"
     ds = p.read_text(encoding="utf-8")

@@ -31,6 +31,34 @@ ALG_MAP = {
 # MAA 特有字段，转换时剔除（避免解析器疑惑）
 DROP_FIELDS = {"Doc", "specificRect_Doc", "rectMove_Doc", "specialParams_Doc", "isAscii"}
 
+# MAA 靠 TemplateConfig 按节点名加载同名模板图的节点（pipeline 里缺显式 template）。
+# 标准 MaaFramework 需要显式 template 字段，这里为这些节点补 template=name.png。
+DEFAULT_TEMPLATE_NODES = {
+    "Recruit", "RecruitConfirm", "RecruitNowConfirm", "RecruitRefresh",
+    "RecruitRefreshConfirm", "RecruitFinish", "RecruitSkip", "RecruitContinue",
+    "RecruitTimerDecrement", "RecruitNoPermit", "RecruitNoRefresh", "Return",
+}
+
+
+def add_default_templates(nodes: dict, template_dir: str) -> dict:
+    """为缺 template 的模板匹配节点补默认模板名（MAA TemplateConfig 语义）。"""
+    if not os.path.isdir(template_dir):
+        return nodes
+    pngs = set()
+    for root, _, files in os.walk(template_dir):
+        for fn in files:
+            if fn.lower().endswith(".png"):
+                pngs.add(os.path.splitext(fn)[0])
+    for name, node in nodes.items():
+        if name not in DEFAULT_TEMPLATE_NODES or name not in pngs:
+            continue
+        if "template" in node:
+            continue
+        if node.get("algorithm") not in (None, "TemplateMatch", "MatchTemplate"):
+            continue
+        node["template"] = name + ".png"
+    return nodes
+
 
 def convert_task(node: dict) -> dict:
     """转换单个 pipeline 节点为标准语法。"""
@@ -121,6 +149,7 @@ def convert(res_dir: str, out_dir: str):
     tasks = load_task_files(res_dir)
     converted = {name: convert_task(node) for name, node in tasks.items() if isinstance(node, dict)}
     converted = clean_refs(converted)
+    converted = add_default_templates(converted, os.path.join(res_dir, "template"))
     pipe_dir = os.path.join(out_dir, "pipeline")
     os.makedirs(pipe_dir, exist_ok=True)
     with open(os.path.join(pipe_dir, "tasks.json"), "w", encoding="utf-8") as f:
